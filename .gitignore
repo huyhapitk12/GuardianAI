@@ -1,0 +1,25 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+
+# IDE / Editor specific files
+.idea/           # PyCharm
+.vscode/         # Visual Studio Code
+.directory
+.DS_Store        # macOS
+Thumbs.db        # Windows
+*.swp            # Vim
+
+# Secrets files
+*.env.*.local
+secrets.yml
+
+# Python specific files
+*.pyc
+*.pyo
+t.py
