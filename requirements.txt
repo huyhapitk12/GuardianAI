@@ -1,0 +1,7 @@
+face-recognition
+google-generativeai
+openai
+opencv-python
+pillow
+python-dotenv
+ultralytics
