@@ -23,3 +23,7 @@ secrets.yml
 *.pyc
 *.pyo
 t.py
+
+# Cache files
+known_embeddings.pkl
+known_names.pkl
