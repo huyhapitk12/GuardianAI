@@ -27,3 +27,5 @@ t.py
 # Cache files
 known_embeddings.pkl
 known_names.pkl
+tmp_alerts/
+kernel.errors.txt
