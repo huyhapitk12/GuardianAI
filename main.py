@@ -52,7 +52,13 @@ def _on_alert(frame, reason, name, meta):
     # create alert entry in state manager
     alert_id = sm.create_alert(reason, chat_id, asked_for=name)
 
-    caption = f"⚠️ Phát hiện {reason}"
+    if reason == "nguoi_la":
+        caption = "⚠️ Phát hiện người lạ"
+    elif reason == "nguoi_quen":
+        caption = "⚠️ Phát hiện người quen"
+    else:
+        caption = "🔥 Phát hiện lửa cháy"
+
     if name:
         caption += f" - tên: {name}\nCó phải {name} đang ở trong khu vực không? (Trả lời trong 60s: có/không/đã ra khỏi nhà)"
     else:
