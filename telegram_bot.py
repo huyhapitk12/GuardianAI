@@ -40,7 +40,8 @@ async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # resolve and push to response queue
     state.resolve_alert(matched["id"], text)
     response_queue.put({"alert_id": matched["id"], "decision": decision, "raw_text": text, "user": user.to_dict() if user else {}})
-    await update.message.reply_text(f"Đã ghi nhận: {text} (xử lý={decision})")
+    if update.message:
+        await update.message.reply_text(f"Đã ghi nhận: {text} (xử lý={decision})")
 
 def run_bot():
     asyncio.set_event_loop(asyncio.new_event_loop())

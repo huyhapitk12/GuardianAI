@@ -20,8 +20,8 @@ RECOGNITION_THRESHOLD = 0.4
 YOLO_MODEL_PATH = os.path.join(MODEL_DIR, "model_openvino_model")
 
 # Recording
-RECORD_SECONDS = 100   # 100s per your last request
-TMP_DIR = os.path.join(BASE_DIR, "tmp_alerts")
+RECORD_SECONDS = 10   # 100s per your last request
+TMP_DIR = os.path.join(BASE_DIR, "tmp")
 os.makedirs(TMP_DIR, exist_ok=True)
 
 # Fire detection

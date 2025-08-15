@@ -56,54 +56,154 @@ def send_video_or_document(token, chat_id, video_path, caption=""):
             os.remove(cmp)
     return ok
 
-class Recorder:
-    def __init__(self, fps=20.0):
-        self.current = None  # {path, writer, start_ts, duration}
-        self.lock = False
-        self.fps = fps
+# video_recorder.py
+import threading
+import time
+import os
+import uuid
+import cv2
 
-    def start(self, reason="alert", duration=RECORD_SECONDS):
-        if self.current:
-            print("Recorder busy")
+class Recorder:
+    """
+    Simple, safe single-writer Recorder.
+    - start(): nhanh, không mở writer.
+    - write(frame): khi nhận frame đầu tiên sẽ mở VideoWriter.
+    - extend(seconds): extend current end_time
+    - check_and_finalize(): khi hết thời gian sẽ close writer and return metadata dict
+    - stop_and_discard(): stop current and delete file
+    """
+
+    def __init__(self, out_dir="tmp", fps=20.0, fourcc_str="mp4v"):
+        self.out_dir = out_dir
+        os.makedirs(self.out_dir, exist_ok=True)
+        self.fps = float(fps)
+        self.fourcc = cv2.VideoWriter.fourcc(*fourcc_str)
+        self._lock = threading.Lock()
+        self.current = None  # dict or None
+
+    def start(self, reason="alert", duration=60):
+        """Start a new recording if none active. Return record dict or None if busy."""
+        # try to acquire lock quickly
+        got = self._lock.acquire(timeout=0.3)
+        if not got:
+            # busy / lock held -> return None quickly
+            print("Recorder.start: lock busy -> returning None")
             return None
-        filename = f"{reason}_{uuid.uuid4().hex}.mp4"
-        path = os.path.join(TMP_DIR, filename)
-        self.current = {"path":path, "writer":None, "start":None, "duration":duration}
-        return self.current
+        try:
+            if self.current is not None:
+                # some active recorder exists
+                print("Recorder.start: current exists -> busy")
+                return None
+            fname = f"rec_{reason}_{int(time.time())}_{uuid.uuid4().hex[:8]}.mp4"
+            path = os.path.join(self.out_dir, fname)
+            rec = {
+                "path": path,
+                "writer": None,         # will be created when first frame arrives
+                "end_time": time.time() + float(duration),
+                "meta": {"reason": reason},
+                "alert_ids": []
+            }
+            self.current = rec
+            print("Recorder.start: created record meta (writer deferred):", path)
+            return rec
+        finally:
+            try:
+                self._lock.release()
+            except RuntimeError:
+                pass
+
+    def extend(self, extra_seconds):
+        """Extend current recording end_time by extra_seconds"""
+        with self._lock:
+            if self.current is None:
+                raise RuntimeError("No active recorder to extend")
+            # Chỉ cần cộng thêm thời gian vào end_time hiện tại
+            self.current["end_time"] += float(extra_seconds)
+            print(f"Recorder.extend: extended by {extra_seconds}s, new end_time:", self.current["end_time"])
+            return self.current["end_time"]
 
     def write(self, frame):
-        if not self.current: return
-        if self.current["writer"] is None:
-            h,w = frame.shape[:2]
-            fourcc = cv2.VideoWriter_fourcc(*"mp4v")
-            self.current["writer"] = cv2.VideoWriter(self.current["path"], fourcc, self.fps, (w,h))
-            self.current["start"] = time.time()
-        self.current["writer"].write(frame)
+        """
+        Write a frame to active recorder. Returns True if written, False otherwise.
+        This will lazily open VideoWriter using frame's shape.
+        """
+        # don't hold lock while writing heavy ops long; we will open writer under lock, then write without lock
+        # Acquire lock to get the rec object reference
+        with self._lock:
+            rec = self.current
+            if rec is None:
+                return False
+            # if writer not created yet, create it now using frame size
+            if rec["writer"] is None:
+                h, w = frame.shape[:2]
+                try:
+                    writer = cv2.VideoWriter(rec["path"], self.fourcc, self.fps, (w, h))
+                    if not writer.isOpened():
+                        print("Recorder.write: VideoWriter failed to open", rec["path"])
+                        # abandon this recorder
+                        self.current = None
+                        return False
+                    rec["writer"] = writer
+                    print("Recorder.write: opened writer:", rec["path"], "frame size:", (w,h))
+                except Exception as e:
+                    print("Recorder.write: failed to open writer:", e)
+                    self.current = None
+                    return False
+            writer = rec["writer"]
+        # write frame (do this outside lock)
+        try:
+            writer.write(frame)
+        except Exception as e:
+            print("Recorder.write: exception writing frame:", e)
+            return False
+        return True
 
     def check_and_finalize(self):
-        if not self.current: return None
-        if self.current["start"] and (time.time() - self.current["start"] >= self.current["duration"]):
-            # finalize
-            try:
-                if self.current["writer"]:
-                    self.current["writer"].release()
-            except:
-                pass
-            p = self.current["path"]
+        """If current recording ended, finalize & return dict {path, alert_ids, meta}, else None."""
+        with self._lock:
+            rec = self.current
+            if rec is None:
+                return None
+            if time.time() < rec["end_time"]:
+                return None
+            # finalize: grab data then clear current
+            writer = rec.get("writer")
+            path = rec.get("path")
+            alert_ids = list(rec.get("alert_ids", []))
+            meta = rec.get("meta", {})
+            # clear current so new recording can start
             self.current = None
-            return p
-        return None
+
+        # Release writer outside lock
+        try:
+            if writer:
+                writer.release()
+        except Exception as e:
+            print("Recorder.check_and_finalize: error releasing writer:", e)
+
+        print("Recorder.check_and_finalize: finalized", path, "alerts:", alert_ids)
+        return {"path": path, "alert_ids": alert_ids, "meta": meta}
 
     def stop_and_discard(self):
-        if not self.current: return
+        """Stop current and delete file if any."""
+        with self._lock:
+            rec = self.current
+            if not rec:
+                return False
+            writer = rec.get("writer")
+            path = rec.get("path")
+            self.current = None
+
         try:
-            if self.current["writer"]:
-                self.current["writer"].release()
-        except:
+            if writer:
+                writer.release()
+        except Exception:
             pass
+
         try:
-            if os.path.exists(self.current["path"]):
-                os.remove(self.current["path"])
-        except:
-            pass
-        self.current = None
+            if path and os.path.exists(path):
+                os.remove(path)
+                print("Recorder.stop_and_discard: removed", path)
+        except Exception as e:
+            print("Recorder.stop_and_discard: failed to remove file:", e)
+        return True
