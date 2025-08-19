@@ -28,7 +28,7 @@ async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     # simple rules
     neg = ["không","ko","k","no","not"]
-    pos = ["có","co","yes","đúng","ok","đúng rồi"]
+    pos = ["có","co","yes","đúng","ok","đúng rồi", "cos"]
     left_tokens = ["đã ra khỏi nhà","đã đi","ra khỏi","đi rồi","đã ra"]
     decision = None
     if any(tok in text for tok in left_tokens):

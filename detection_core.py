@@ -1,28 +1,11 @@
 # detection_core.py
-import os
-import time
-import uuid
-import threading
-import queue
-import pickle
-import copy
+import os, time, uuid, threading, queue, pickle, cv2
 from collections import defaultdict
-
-import cv2
 from ultralytics import YOLO
 from insightface.app import FaceAnalysis
 from scipy.spatial.distance import cosine
+from config import EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH, MODEL_NAME, RECOGNITION_THRESHOLD, DATA_DIR, FRAMES_REQUIRED, PROCESS_EVERY_N_FRAMES, PROCESS_SIZE, DEBOUNCE_SECONDS
 
-# --- FILES / CONFIG (cập nhật nếu cần) ---
-EMBEDDING_FILE = "Data/known_embeddings.pkl"
-NAMES_FILE = "Data/known_names.pkl"
-DATA_DIR = "Data/Image"
-MODEL_NAME = 'buffalo_s'
-RECOGNITION_THRESHOLD = 0.45   # ngưỡng so sánh embedding (càng nhỏ càng strict)
-FRAMES_REQUIRED = 3            # số frame liên tiếp để xác nhận một face
-PROCESS_EVERY_N_FRAMES = 3
-PROCESS_SIZE = (416, 416)
-DEBOUNCE_SECONDS = 30         # thời gian debounce cho cùng 1 alert (theo type/name)
 
 # --- Hook để main bind ---
 # signature: on_alert_callback(frame, reason, name, meta)
@@ -33,8 +16,6 @@ on_alert_callback = None
 print("[detection_core] Loading models...")
 # YOLO model dùng để detect fire/smoke/person
 # Nếu bạn chỉ dùng 1 model, đặt path tương ứng
-YOLO_MODEL_PATH = "Data/Model/model_openvino_model"   # model detect fire/smoke (and possibly person)
-YOLO_PERSON_MODEL_PATH = "Data/Model/yolo11n_openvino_model"  # optional separate person detector
 
 # NẾU bạn chỉ có 1 model, có thể dùng same path for both variables
 try:
@@ -60,8 +41,10 @@ if os.path.exists(EMBEDDING_FILE) and os.path.exists(NAMES_FILE):
     print("Đang tải dữ liệu khuôn mặt đã biết từ bộ nhớ cache...")
     with open(EMBEDDING_FILE, 'rb') as f:
         known_embeddings = pickle.load(f)
+        f.close()
     with open(NAMES_FILE, 'rb') as f:
         known_names = pickle.load(f)
+        f.close()
     print(f"Đã tải {len(known_names)} khuôn mặt đã biết.")
 else:
     print("Đang mã hóa các khuôn mặt đã biết. Quá trình này có thể mất một lúc...")
@@ -98,8 +81,10 @@ else:
         print(f"Đã lưu {len(known_names)} vector đặc trưng vào bộ nhớ cache.")
         with open(EMBEDDING_FILE, 'wb') as f:
             pickle.dump(known_embeddings, f)
+            f.close()
         with open(NAMES_FILE, 'wb') as f:
             pickle.dump(known_names, f)
+            f.close()
 
 # --- Utility functions ---
 def match_face(embedding):
@@ -117,6 +102,19 @@ def match_face(embedding):
             best_d = d
             best_name = k_name
     return best_name, best_d
+
+# Added function to update known data
+
+def update_known_data():
+    global known_embeddings, known_names
+    try:
+        with open(EMBEDDING_FILE, 'rb') as f:
+            known_embeddings = pickle.load(f)
+        with open(NAMES_FILE, 'rb') as f:
+            known_names = pickle.load(f)
+        print(f"[detection_core] Known data updated. Total faces: {len(known_names)}")
+    except Exception as e:
+        print(f"[detection_core] Failed to update known data: {e}")
 
 # --- Camera class ---
 class Camera:
@@ -391,6 +389,8 @@ class Camera:
 # convenience for main
 def get_known_data():
     return known_embeddings, known_names
+
+__all__ = ['Camera', 'app', 'match_face', 'update_known_data']
 
 if __name__ == "__main__":
     cam = Camera(show_window=True)
