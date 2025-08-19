@@ -10,16 +10,16 @@ class GUI:
         self.root = tk.Tk()
         self.root.title("Guardian - Face Manager")
         frame = tk.Frame(self.root); frame.pack(padx=8,pady=8)
-        tk.Button(frame, text="Add face (image)", command=self.add_face).grid(row=0,column=0)
-        tk.Button(frame, text="Rebuild embeddings", command=self.rebuild).grid(row=0,column=1)
-        tk.Button(frame, text="List faces", command=self.list_faces).grid(row=0,column=2)
-        tk.Button(frame, text="Delete face", command=self.delete_face).grid(row=0,column=3)
-        tk.Button(frame, text="Close", command=self.root.destroy).grid(row=0,column=4)
+        tk.Button(frame, text="Thêm khuôn mặt", command=self.add_face).grid(row=0,column=0)
+        tk.Button(frame, text="Xây dựng lại embeddings", command=self.rebuild).grid(row=0,column=1)
+        tk.Button(frame, text="Danh sách khuôn mặt", command=self.list_faces).grid(row=0,column=2)
+        tk.Button(frame, text="Xóa khuôn mặt", command=self.delete_face).grid(row=0,column=3)
+        tk.Button(frame, text="Đóng", command=self.root.destroy).grid(row=0,column=4)
 
     def add_face(self):
         img = filedialog.askopenfilename(filetypes=[("Image","*.jpg *.png *.jpeg")])
         if not img: return
-        name = simpledialog.askstring("Name","Enter person name:", parent=self.root)
+        name = simpledialog.askstring("Tên","Nhập tên người:", parent=self.root)
         if not name: return
         target = os.path.join(DATA_DIR, name)
         os.makedirs(target, exist_ok=True)
@@ -67,7 +67,7 @@ class GUI:
     def rebuild(self):
         # simple approach: remove existing embeddings file and call detection_core re-encode logic:
         # Here we reuse detection_core encoding: ask user to rerun program or you can implement function to rebuild
-        messagebox.showinfo("Note","Rebuild will run encoding - it may take time. Please run main.py to let detection_core create embeddings.")
+        messagebox.showinfo("Thông báo","Việc xây dựng lại sẽ chạy mã hóa - điều này có thể mất thời gian.")
         known_embeddings = []
         known_names = []
 
@@ -84,7 +84,7 @@ class GUI:
                 img = cv2.imread(filepath)
 
                 if img is None:
-                    print(f"Lỗi: không thể đọc ảnh {filepath}")
+                    messagebox.showerror("Lỗi", f"Không thể đọc ảnh {filepath}")
                     continue
 
                 faces = app.get(img)
@@ -93,12 +93,12 @@ class GUI:
                     embedding = faces[0].embedding
                     known_embeddings.append(embedding)
                     known_names.append(person_name)
-                    print(f"Đã mã hóa: {person_name}/{filename}")
+                    messagebox.showinfo("Thông báo", f"Đã mã hóa: {person_name}/{filename}")
                 else:
-                    print(f"Cảnh báo: Không tìm thấy khuôn mặt nào trong ảnh {filepath}")
+                    messagebox.showwarning("Cảnh báo", f"Không tìm thấy khuôn mặt nào trong ảnh {filepath}")
 
         if known_embeddings:
-            print(f"Đã lưu {len(known_names)} vector đặc trưng vào bộ nhớ cache.")
+            messagebox.showinfo("Thông báo", f"Đã mã hóa {len(known_names)} khuôn mặt.")
             with open(EMBEDDING_FILE, 'wb') as f:
                 pickle.dump(known_embeddings, f)
                 f.close()
@@ -118,14 +118,14 @@ class GUI:
     def delete_face(self):
         persons = [d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR,d))]
         if not persons:
-            messagebox.showinfo("Delete","No faces")
+            messagebox.showinfo("Xóa","Không có khuôn mặt nào")
             return
-        sel = simpledialog.askstring("Delete","Enter name to delete:\n" + ", ".join(persons), parent=self.root)
+        sel = simpledialog.askstring("Xóa","Nhập tên để xóa:\n" + ", ".join(persons), parent=self.root)
         if not sel: return
         p = os.path.join(DATA_DIR, sel)
         if os.path.exists(p):
             shutil.rmtree(p)
-            messagebox.showinfo("Deleted", f"{sel} deleted. Run rebuild.")
+            messagebox.showinfo("Đã xóa", f"{sel} đã bị xóa. Vui lòng chạy lại.")
             with open(EMBEDDING_FILE, 'rb') as f:
                 known_embeddings = pickle.load(f)
                 f.close()
@@ -148,7 +148,7 @@ class GUI:
 
             update_known_data()
         else:
-            messagebox.showerror("Error","Not found")
+            messagebox.showerror("Lỗi","Không tìm thấy")
 
     def run(self):
         self.root.mainloop()
