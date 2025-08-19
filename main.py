@@ -6,12 +6,13 @@ import uuid
 import queue
 import logging
 import cv2
+import customtkinter as ctk
 
 from detection_core import Camera, on_alert_callback  # detection_core should export Camera and allow callback
 from telegram_bot import run_bot, response_queue, state
 from video_recorder import Recorder, send_photo, send_video_or_document
 from state_manager import StateManager
-from gui_manager import GUI
+from gui_manager import FaceManagerApp
 from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, FIRE_WINDOW_SECONDS, FIRE_REQUIRED_COUNT
 import detection_core
 
@@ -289,6 +290,11 @@ def recorder_monitor_loop(cam):
             print("Error during recorder write/finalize:", e)
         time.sleep(0.02)
 
+def run_gui():
+    root = ctk.CTk()
+    app = FaceManagerApp(root)
+    root.mainloop()
+
 
 if __name__ == "__main__":
     # start telegram bot
@@ -296,7 +302,7 @@ if __name__ == "__main__":
     tbot.start()
 
     # start GUI optionally
-    gui_thread = threading.Thread(target=lambda: GUI().run(), daemon=True)
+    gui_thread = threading.Thread(target=run_gui, daemon=True)
     gui_thread.start()
 
     # create camera and run detection (detect() is blocking)
