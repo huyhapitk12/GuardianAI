@@ -18,6 +18,7 @@ RECOGNITION_THRESHOLD = 0.4
 
 # YOLO path (your model folder)
 YOLO_MODEL_PATH = os.path.join(MODEL_DIR, "model_openvino_model")
+YOLO_PERSON_MODEL_PATH = "Data/Model/yolo12s_openvino_model"  # optional separate person detector
 
 # Recording
 RECORD_SECONDS = 10   # 100s per your last request
@@ -29,8 +30,10 @@ FIRE_WINDOW_SECONDS = 30
 FIRE_REQUIRED_COUNT = 20
 
 # Processing
+FRAMES_REQUIRED = 5            # số frame liên tiếp để xác nhận một face
 PROCESS_EVERY_N_FRAMES = 3
 PROCESS_SIZE = (416, 416)
+DEBOUNCE_SECONDS = 30         # thời gian debounce cho cùng 1 alert (theo type/name)
 
 # Telegram upload
 VIDEO_PREVIEW_LIMIT_MB = 48.0
@@ -44,16 +47,3 @@ if OPENAI_API_KEY:
 
 # Logging
 LOG_CSV = os.path.join(BASE_DIR, "events_log.csv")
-
-# Detection_Core
-EMBEDDING_FILE = "Data/known_embeddings.pkl"
-NAMES_FILE = "Data/known_names.pkl"
-DATA_DIR = "Data/Image"
-MODEL_NAME = 'buffalo_s'
-RECOGNITION_THRESHOLD = 0.45   # ngưỡng so sánh embedding (càng nhỏ càng strict)
-FRAMES_REQUIRED = 3            # số frame liên tiếp để xác nhận một face
-PROCESS_EVERY_N_FRAMES = 3
-PROCESS_SIZE = (416, 416)
-DEBOUNCE_SECONDS = 30         # thời gian debounce cho cùng 1 alert (theo type/name)
-YOLO_MODEL_PATH = "Data/Model/model_openvino_model"   # model detect fire/smoke (and possibly person)
-YOLO_PERSON_MODEL_PATH = "Data/Model/yolo11n_openvino_model"  # optional separate person detector

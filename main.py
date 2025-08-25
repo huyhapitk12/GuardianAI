@@ -306,7 +306,7 @@ if __name__ == "__main__":
     gui_thread.start()
 
     # create camera and run detection (detect() is blocking)
-    cam = Camera()
+    cam = Camera("rtsp://admin:XGZBPX@192.168.1.6:554/h264/ch1/main/av_stream")
     # start recorder monitor thread
     threading.Thread(target=recorder_monitor_loop, args=(cam,), daemon=True).start()
     # run detection (this will likely block until you quit)
