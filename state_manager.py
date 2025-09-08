@@ -1,5 +1,6 @@
 # state_manager.py
 import time, threading, uuid
+from config import DEBOUNCE_SECONDS  # added debounce config
 
 class StateManager:
     def __init__(self):
@@ -7,8 +8,15 @@ class StateManager:
         self.active = {}  # alert_id -> info
 
     def create_alert(self, typ, chat_id, asked_for=None):
+        import time
+        current_time = time.time()
+        # Check for an existing unresolved alert within the debounce period
+        for alert in self.active.values():
+            if (alert['type'] == typ and str(alert['chat_id']) == str(chat_id) and 
+                not alert['resolved'] and (current_time - alert['ts'] < DEBOUNCE_SECONDS)):
+                return alert['id']
         aid = uuid.uuid4().hex
-        info = {"id":aid, "type":typ, "chat_id":chat_id, "asked_for":asked_for, "ts":time.time(), "resolved":False, "reply":None}
+        info = {"id": aid, "type": typ, "chat_id": chat_id, "asked_for": asked_for, "ts": current_time, "resolved": False, "reply": None}
         with self.lock:
             self.active[aid] = info
         return aid

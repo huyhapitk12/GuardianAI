@@ -28,6 +28,7 @@ os.makedirs(TMP_DIR, exist_ok=True)
 # Fire detection
 FIRE_WINDOW_SECONDS = 30
 FIRE_REQUIRED_COUNT = 20
+FIRE_CONFIDENCE_THRESHOLD = 0.5  # ngưỡng confidence cho phát hiện lửa/khói
 
 # Processing
 FRAMES_REQUIRED = 5            # số frame liên tiếp để xác nhận một face

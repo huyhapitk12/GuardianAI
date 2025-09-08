@@ -12,7 +12,7 @@ from ultralytics import YOLO
 from insightface.app import FaceAnalysis
 from scipy.spatial.distance import cosine
 
-from config import EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH, MODEL_NAME, RECOGNITION_THRESHOLD, DATA_DIR, FRAMES_REQUIRED, PROCESS_EVERY_N_FRAMES, PROCESS_SIZE, DEBOUNCE_SECONDS
+from config import EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH, MODEL_NAME, RECOGNITION_THRESHOLD, DATA_DIR, FRAMES_REQUIRED, PROCESS_EVERY_N_FRAMES, PROCESS_SIZE, DEBOUNCE_SECONDS, FIRE_CONFIDENCE_THRESHOLD
 
 # --- Hook để main bind ---
 # signature: on_alert_callback(frame, reason, name, meta)
@@ -221,7 +221,7 @@ class Camera:
                 continue
 
     def fire_worker(self):
-        """Worker dùng YOLO model chính để detect fire/smoke (hoặc các class khác)"""
+        """Worker dùng YOLO model chính để detect fire/smoke (hoặc các class khác), có ngưỡng confidence."""
         if model is None:
             while not self.quit:
                 time.sleep(1.0)
@@ -236,11 +236,17 @@ class Camera:
                 fire_results = []
                 if len(results) > 0 and hasattr(results[0], "boxes"):
                     for box in results[0].boxes:
+                        # Lấy confidence score
+                        conf = float(box.conf[0]) if hasattr(box, "conf") else 1.0
+                        if conf < FIRE_CONFIDENCE_THRESHOLD:
+                            continue
                         coords = box.xyxy[0].tolist()
                         x1, y1, x2, y2 = map(int, coords)
                         cls_id = int(box.cls[0]) if hasattr(box, "cls") else int(box.cls)
                         cls_name = results[0].names.get(cls_id, str(cls_id)) if hasattr(results[0], "names") else str(cls_id)
-                        fire_results.append((x1, y1, x2, y2, cls_name))
+                        # Chỉ giữ các class có tên liên quan tới fire/smoke
+                        if cls_name.lower() in ("fire", "smoke", "flame"):
+                            fire_results.append((x1, y1, x2, y2, "lua_chay"))
                 try:
                     self.result_queue.put(("fire", fire_results), timeout=0.5)
                 except queue.Full:
@@ -396,8 +402,10 @@ class Camera:
 
                     elif typ == "fire":
                         for (x1, y1, x2, y2, label) in results:
-                            labl = str(label).lower()
-                            if "fire" in labl or "smoke" in labl or "lava" in labl:
+                            if label == "lua_chay":
+                                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)  # cam đỏ
+                                cv2.putText(frame, "FIRE", (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
+
                                 key = ("lua_chay",)
                                 if self._should_alert(key) and on_alert_callback:
                                     try:
