@@ -13,7 +13,7 @@ EMBEDDING_FILE = os.path.join(BASE_DIR, "Data", "known_embeddings.pkl")
 NAMES_FILE = os.path.join(BASE_DIR, "Data", "known_names.pkl")
 
 # Face model
-MODEL_NAME = "buffalo_s"
+MODEL_NAME = "buffalo_l"
 RECOGNITION_THRESHOLD = 0.4
 
 # YOLO path (your model folder)
@@ -33,7 +33,7 @@ FIRE_CONFIDENCE_THRESHOLD = 0.5  # ngưỡng confidence cho phát hiện lửa/k
 # Processing
 FRAMES_REQUIRED = 5            # số frame liên tiếp để xác nhận một face
 PROCESS_EVERY_N_FRAMES = 3
-PROCESS_SIZE = (416, 416)
+PROCESS_SIZE = (1280, 720)
 DEBOUNCE_SECONDS = 30         # thời gian debounce cho cùng 1 alert (theo type/name)
 
 # Telegram upload
@@ -48,3 +48,6 @@ if OPENAI_API_KEY:
 
 # Logging
 LOG_CSV = os.path.join(BASE_DIR, "events_log.csv")
+
+# IP camera
+IP_CAMERA_URL = "rtsp://admin:XGZBPX@192.168.1.6:554/h264/ch1/sub_stream"

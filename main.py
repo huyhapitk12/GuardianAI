@@ -20,7 +20,7 @@ from video_recorder import Recorder, send_photo, send_video_or_document
 
 # gui and config
 from gui_manager import FaceManagerApp
-from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, FIRE_WINDOW_SECONDS, FIRE_REQUIRED_COUNT
+from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, FIRE_WINDOW_SECONDS, FIRE_REQUIRED_COUNT, IP_CAMERA_URL
 
 # spam guard to prevent alert flooding
 from spam_guard import SpamGuard
@@ -340,7 +340,7 @@ if __name__ == "__main__":
 
     # create camera and run detection (detect() is blocking)
     try:
-        cam = Camera()
+        cam = Camera(IP_CAMERA_URL)
         # make cam globally accessible for start_clip_for_alert
         globals()["cam"] = cam
     except Exception as e:
