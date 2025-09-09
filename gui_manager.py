@@ -7,7 +7,7 @@ import pickle
 from PIL import Image
 
 # --- Import thật từ dự án của bạn ---
-from detection_core import app, update_known_data
+from detection_core import update_known_data, update_model
 from config import EMBEDDING_FILE, NAMES_FILE, DATA_DIR
 # ------------------------------------
 
@@ -45,6 +45,19 @@ class FaceManagerApp:
         general_actions_frame = ctk.CTkFrame(self.left_frame)
         general_actions_frame.grid(row=2, column=0, padx=10, pady=10, sticky="sew")
 
+        model_label = ctk.CTkLabel(general_actions_frame, text="Chọn Model")
+        model_label.pack(pady=(10,0), padx=10, fill="x")
+
+        self.model_var = ctk.StringVar(value="buffalo_l")  # default
+        model_options = ["buffalo_s", "buffalo_l"]
+        model_combo = ctk.CTkOptionMenu(
+            general_actions_frame,
+            variable=self.model_var,
+            values=model_options,
+            command=self.change_model
+        )
+        model_combo.pack(pady=5, padx=10, fill="x")
+
         btn_add_person = ctk.CTkButton(general_actions_frame, text="Thêm Người Mới", command=self.add_person)
         btn_add_person.pack(pady=5, padx=10, fill="x")
 
@@ -63,6 +76,11 @@ class FaceManagerApp:
         # --- Populate danh sách ban đầu ---
         self.populate_person_list()
         self.show_placeholder_content()
+
+    def change_model(self, selected):
+        update_model(selected)
+        messagebox.showinfo("Model Changed", f"Đã chuyển sang model: {selected}")
+
 
     def populate_person_list(self):
         # Xóa danh sách cũ

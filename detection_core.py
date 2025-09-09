@@ -35,7 +35,7 @@ except Exception as e:
 
 # InsightFace
 app = FaceAnalysis(name=MODEL_NAME, root="Data/Model", allowed_modules=['detection', 'recognition'])
-app.prepare(ctx_id=-1, det_size=(640, 480))
+app.prepare(ctx_id=-1, det_size=(640, 640))
 print("[detection_core] InsightFace ready.")
 
 # --- Load known embeddings/names ---
@@ -112,6 +112,11 @@ def update_known_data():
         print(f"[detection_core] Known data updated. Total faces: {len(known_names)}")
     except Exception as e:
         print(f"[detection_core] Failed to update known data: {e}")
+
+def update_model(selected):
+    global app
+    app = FaceAnalysis(name=selected, root="Data/Model", allowed_modules=['detection', 'recognition'])
+    app.prepare(ctx_id=-1, det_size=(640, 640))
 
 # Tracker helper
 def create_tracker_prefer_csrt():
