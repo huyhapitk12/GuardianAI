@@ -8,111 +8,84 @@ import logging
 import cv2
 import customtkinter as ctk
 
-# IMPORTANT: import Camera class and the module so we can set callback on module-level
 from detection_core import Camera
 import detection_core
-
-# telegram bot (AI-enabled) exports
 from telegram_bot import run_bot, response_queue, state
-
-# recorder / sender utilities
 from video_recorder import Recorder, send_photo, send_video_or_document
-
-# gui and config
 from gui_manager import FaceManagerApp
-from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, FIRE_WINDOW_SECONDS, FIRE_REQUIRED_COUNT, IP_CAMERA_URL
-
-# spam guard to prevent alert flooding
+from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, IP_CAMERA_URL, DEBOUNCE_SECONDS
 from spam_guard import SpamGuard
 
-# setup logging to stdout
-logging.basicConfig(level=logging.DEBUG, format="%(asctime)s %(levelname)s %(message)s")
+logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("guardian")
 
-# shared objects
 recorder = Recorder()
-sm = state  # state manager from telegram_bot
+sm = state
 response_q = response_queue
+guard = SpamGuard(debounce_seconds=DEBOUNCE_SECONDS, min_interval=10, max_per_minute=4)
 
-# spam guard instance
-guard = SpamGuard(debounce_seconds=30, min_interval=10, max_per_minute=3)
+USER_RESPONSE_WINDOW = 60
 
-# fire aggregation (if your project uses it)
-from collections import deque
-fire_timestamps = deque()
-
-# ---------- Alert callback used by detection_core ----------
 def _on_alert(frame, reason, name, meta):
-    """
-    Called by detection_core when an event occurs.
-    reason: 'nguoi_la' | 'nguoi_quen' | 'lua_chay' (example)
-    name: detected person name if known, else None
-    meta: additional metadata
-    """
+    if reason == "nguoi_quen":
+        alert_key = (reason, name)
+    else:
+        alert_key = reason
 
-    if not guard.allow(reason):
-        log.info("Bỏ qua cảnh báo %s để tránh spam", reason)
+    # <--- THAY ĐỔI MỚI: Lớp kiểm tra đầu tiên và quan trọng nhất --->
+    # Nếu đã có một cảnh báo cho người/sự kiện này đang chờ phản hồi, hãy bỏ qua hoàn toàn.
+    if sm.has_unresolved_alert(alert_key):
+        log.info("Bỏ qua cảnh báo %s vì đã có một cảnh báo khác đang chờ phản hồi.", alert_key)
         return
 
+    # Lớp kiểm tra thứ hai: SpamGuard để chống các phát hiện dồn dập
+    if not guard.allow(alert_key):
+        log.info("Bỏ qua cảnh báo %s để tránh spam (debounce)", alert_key)
+        return
+
+    log.info(">>> CẢNH BÁO MỚI ĐƯỢC PHÉP: %s", alert_key)
+
     chat_id = TELEGRAM_CHAT_ID
-    ts = time.time()
     img_path = os.path.join(TMP_DIR, f"alert_{reason}_{uuid.uuid4().hex}.jpg")
 
-    # save image (best-effort)
     try:
         cv2.imwrite(img_path, frame)
     except Exception as e:
         log.exception("Failed to write img: %s", e)
         return
 
-    # create alert entry in state manager
     alert_id = sm.create_alert(reason, chat_id, asked_for=name)
 
     if reason == "nguoi_la":
         caption = "⚠️ Phát hiện người lạ"
     elif reason == "nguoi_quen":
-        caption = "⚠️ Phát hiện người quen"
+        caption = f"👋 Phát hiện {name}"
     else:
-        caption = "🔥 Phát hiện lửa cháy"
+        caption = "🔥 CẢNH BÁO CHÁY"
 
-    if name:
-        caption += f" - tên: {name}\nCó phải {name} đang ở trong khu vực không? (Trả lời trong 60s: có/không/đã ra khỏi nhà)"
+    if reason != "lua_chay":
+        caption += f"\n\nBạn có nhận ra người này không? (Trả lời trong {USER_RESPONSE_WINDOW}s: có/không/đã ra khỏi nhà)"
     else:
-        caption += "\nVui lòng phản hồi trong 60s nếu có mặt trong nhà."
+        caption += "\n\nVui lòng kiểm tra ngay lập tức!"
 
-    # immediate short clip for stranger alerts (best-effort)
     if reason == "nguoi_la":
         cam_obj = globals().get("cam", None)
         try:
-            start_clip_for_alert(
-                cam_obj,
-                frame,
-                alert_id,
-                duration=8,
-                fps=recorder.fps if hasattr(recorder, "fps") else 20.0,
-                reason="nguoi_la",
-            )
+            start_clip_for_alert(cam_obj, frame, alert_id, duration=8, fps=recorder.fps)
             log.info("Started immediate clip worker for stranger alert %s", alert_id)
         except Exception as e:
             log.exception("Failed to start immediate clip for alert %s: %s", alert_id, e)
 
-    # send photo in background (non-blocking)
-    try:
-        threading.Thread(target=lambda: send_photo(TELEGRAM_TOKEN, chat_id, img_path, caption), daemon=True).start()
-    except Exception as e:
-        log.exception("Failed to spawn send_photo thread: %s", e)
+    threading.Thread(target=lambda: send_photo(TELEGRAM_TOKEN, chat_id, img_path, caption), daemon=True).start()
 
-    # --------- start recorder (in a safe wrapper) ----------
-    def _try_start_recorder(reason, duration, timeout=3.0):
+    def _try_start_recorder(reason, duration, timeout=3.0, **kwargs):
         q = queue.Queue()
-
         def target():
             try:
-                r = recorder.start(reason=reason, duration=duration)
+                r = recorder.start(reason=reason, duration=duration, **kwargs)
                 q.put(("ok", r))
             except Exception as e:
                 q.put(("exc", e))
-
         t = threading.Thread(target=target, daemon=True)
         t.start()
         t.join(timeout)
@@ -131,7 +104,10 @@ def _on_alert(frame, reason, name, meta):
             return None
 
     log.debug("Attempting to start recorder for alert %s", alert_id)
-    rec = _try_start_recorder(reason, RECORD_SECONDS, timeout=3.0)
+    
+    wait_for_user_reply = (reason == "nguoi_quen")
+    rec = _try_start_recorder(reason, RECORD_SECONDS, timeout=3.0, wait_for_user=wait_for_user_reply)
+    
     if rec is None:
         log.warning("Recorder returned None (busy/timeout/failed). Attaching/extending if possible.")
         current = getattr(recorder, "current", None)
@@ -151,54 +127,53 @@ def _on_alert(frame, reason, name, meta):
         rec["alert_id"] = alert_id
         log.info("Started new recorder for alert %s -> %s", alert_id, rec.get("path", "<no-path>"))
 
-    # --------- watcher thread: wait for user response in response_queue ---------
     def watcher(aid):
         start = time.time()
-        while time.time() - start < 60:
+        reply_received = False
+        while time.time() - start < USER_RESPONSE_WINDOW:
             try:
                 resp = response_q.get(timeout=1.0)
             except queue.Empty:
-                resp = None
+                continue
+            
             if resp and resp.get("alert_id") == aid:
+                reply_received = True
                 decision = resp.get("decision")
                 raw = resp.get("raw_text")
+                
+                recorder.resolve_user_wait()
+                
+                sm.resolve_alert(aid, raw)
                 if decision in ("yes", "left"):
                     log.info("Owner replied safe -> stop and delete rec")
                     recorder.stop_and_discard()
-                    sm.resolve_alert(aid, raw)
-                    return
-                elif decision == "no" or decision is None:
-                    log.info("Negative reply -> keep recording")
-                    sm.resolve_alert(aid, raw)
-                    return
-        log.info("No reply in 60s for alert %s", aid)
+                else:
+                    log.info("Negative/unclear reply -> keep recording")
+                
+                return
+
+        if not reply_received:
+            log.info("No reply in %ds for alert %s. Resolving user wait.", USER_RESPONSE_WINDOW, aid)
+            recorder.resolve_user_wait()
 
     threading.Thread(target=watcher, args=(alert_id,), daemon=True).start()
 
-
-# bind the callback so detection_core will call us
+# (Phần còn lại của file main.py giữ nguyên, không cần thay đổi)
+# ...
+# (Các hàm start_clip_for_alert, recorder_monitor_loop, run_gui, và __main__ giữ nguyên)
+# ...
 detection_core.on_alert_callback = _on_alert
 
 
 def start_clip_for_alert(cam, initial_frame, alert_id, duration=8, fps=20.0, reason="clip"):
-    """
-    Bắt 1 thread riêng, ghi initial_frame + các frame tiếp theo lấy từ cam.read()
-    trong `duration` giây, lưu vào TMP_DIR và gửi bằng send_video_or_document.
-    - cam: object camera (detection_core.Camera) phải có method read() trả (ret, frame)
-    - initial_frame: frame đã nhận khi phát hiện (numpy array)
-    """
     def worker():
         os.makedirs(TMP_DIR, exist_ok=True)
         fname = f"clip_{reason}_{alert_id[:8]}_{uuid.uuid4().hex[:8]}.mp4"
         path = os.path.join(TMP_DIR, fname)
-
-        # determine frame size from initial_frame
         try:
             h, w = initial_frame.shape[:2]
         except Exception:
-            # fallback size
             h, w = 480, 640
-
         fourcc = cv2.VideoWriter.fourcc(*"mp4v")
         try:
             writer = cv2.VideoWriter(path, fourcc, float(fps), (w, h))
@@ -208,29 +183,21 @@ def start_clip_for_alert(cam, initial_frame, alert_id, duration=8, fps=20.0, rea
         except Exception as e:
             log.exception("Clip worker: failed to create VideoWriter: %s", e)
             return
-
         t0 = time.time()
-        # write initial frame first
         try:
             writer.write(initial_frame)
         except Exception as e:
             log.exception("Clip worker: write initial_frame failed: %s", e)
-
-        # keep reading frames from cam.read() for duration
         while time.time() - t0 < float(duration):
             try:
-                # prefer cam.read() API (we added this earlier)
                 if hasattr(cam, "read"):
                     ret, frame = cam.read()
                 else:
-                    # fallback: try to use _last_frame
                     frame = getattr(cam, "_last_frame", None)
                     ret = frame is not None
-
                 if not ret or frame is None:
                     time.sleep(0.02)
                     continue
-                # ensure shape matches writer or resize if necessary
                 try:
                     fh, fw = frame.shape[:2]
                     if (fw, fh) != (w, h):
@@ -242,72 +209,39 @@ def start_clip_for_alert(cam, initial_frame, alert_id, duration=8, fps=20.0, rea
                 log.exception("Clip worker: exception while reading/writing frame: %s", e)
                 time.sleep(0.02)
                 continue
-
-        # finalize
         try:
             writer.release()
         except Exception:
             pass
-
-        # send file async (this will do http post)
         try:
             threading.Thread(target=lambda p=path: send_video_or_document(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, p, caption=f"📹 Clip cảnh báo ({reason})"), daemon=True).start()
         except Exception as e:
             log.exception("Clip worker: failed to spawn send thread: %s", e)
-
     threading.Thread(target=worker, daemon=True).start()
 
-
-# ---------- recorder monitor loop (background thread) ----------
 def recorder_monitor_loop(cam):
-    cap = cam
     log.info("recorder_monitor_loop started, cam type: %s", type(cam))
-    last_status_log = time.time()
-    loop_count = 0
     while True:
-        loop_count += 1
-        if getattr(cap, "quit", False):
+        if getattr(cam, "quit", False):
             log.info("recorder_monitor_loop quitting due to cam.quit")
             break
         ret, frame = False, None
         try:
-            if hasattr(cap, "read"):
-                ret, frame = cap.read()
-            if (not ret) and hasattr(cap, "_last_frame"):
-                f = getattr(cap, "_last_frame", None)
+            if hasattr(cam, "read"):
+                ret, frame = cam.read()
+            if (not ret) and hasattr(cam, "_last_frame"):
+                f = getattr(cam, "_last_frame", None)
                 if f is not None:
                     ret, frame = True, f
-            if (not ret) and hasattr(cap, "capture_array"):
-                f = cap.capture_array()
-                ret = f is not None
-                frame = f
         except Exception as e:
             log.exception("Exception while reading frame: %s", e)
             ret, frame = False, None
-
         if not ret:
-            if time.time() - last_status_log > 5.0:
-                log.info("recorder_monitor_loop: no frame (ret=False). loop_count=%s recorder.current=%s", loop_count, bool(getattr(recorder,'current',None)))
-                last_status_log = time.time()
             time.sleep(0.05)
             continue
-
-        # log frame info
-        try:
-            if frame is not None:
-                h, w = frame.shape[:2]
-                log.debug("recorder_monitor_loop: got frame size=%dx%d, recorder.current=%s", w, h, 'yes' if recorder.current else 'no')
-            else:
-                log.debug("recorder_monitor_loop: frame is None, skipping shape logging")
-        except Exception as e:
-            log.exception("recorder_monitor_loop: got frame but cannot read shape: %s", e)
-
-        # write to recorder if active
         try:
             if recorder.current:
-                log.debug("recorder_monitor_loop: calling recorder.write(...) path=%s", recorder.current.get('path'))
-                wrote = recorder.write(frame)
-                log.debug("recorder_monitor_loop: recorder.write returned %s", wrote)
+                recorder.write(frame)
                 finalized = recorder.check_and_finalize()
                 if finalized:
                     path = finalized if isinstance(finalized, str) else finalized.get("path")
@@ -317,41 +251,29 @@ def recorder_monitor_loop(cam):
             log.exception("Error during recorder write/finalize: %s", e)
         time.sleep(0.02)
 
-
 def run_gui():
     root = ctk.CTk()
     app = FaceManagerApp(root)
     root.mainloop()
 
-
 if __name__ == "__main__":
-    # start telegram bot in background thread (AI-enabled)
     tbot = threading.Thread(target=run_bot, daemon=True)
     tbot.start()
     log.info("Telegram bot thread started.")
-
-    # start GUI optionally
     try:
         gui_thread = threading.Thread(target=run_gui, daemon=True)
         gui_thread.start()
         log.info("GUI thread started.")
     except Exception as e:
         log.exception("Failed to start GUI thread: %s", e)
-
-    # create camera and run detection (detect() is blocking)
     try:
         cam = Camera(IP_CAMERA_URL)
-        # make cam globally accessible for start_clip_for_alert
         globals()["cam"] = cam
     except Exception as e:
         log.exception("Failed to create Camera: %s", e)
         raise
-
-    # start recorder monitor thread
     threading.Thread(target=recorder_monitor_loop, args=(cam,), daemon=True).start()
     log.info("Recorder monitor thread started.")
-
-    # run detection loop (blocking)
     try:
         cam.detect()
     except KeyboardInterrupt:

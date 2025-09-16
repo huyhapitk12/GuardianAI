@@ -1,20 +1,48 @@
 # state_manager.py
 import time, threading, uuid
-from config import DEBOUNCE_SECONDS  # added debounce config
+from config import DEBOUNCE_SECONDS
+from typing import Union, Tuple
 
 class StateManager:
     def __init__(self):
         self.lock = threading.Lock()
         self.active = {}  # alert_id -> info
 
+    # <--- THAY ĐỔI MỚI: Thêm hàm kiểm tra cảnh báo đang chờ --->
+    def has_unresolved_alert(self, key: Union[str, Tuple]) -> bool:
+        """
+        Kiểm tra xem có cảnh báo nào chưa được giải quyết cho một key cụ thể không.
+        Key có thể là "nguoi_la" hoặc ("nguoi_quen", "TenNguoiA").
+        """
+        with self.lock:
+            for alert in self.active.values():
+                if alert['resolved']:
+                    continue
+
+                # Xây dựng key của alert đang xét để so sánh
+                current_key = None
+                if alert['type'] == 'nguoi_quen':
+                    current_key = (alert['type'], alert['asked_for'])
+                else:
+                    current_key = alert['type']
+
+                if current_key == key:
+                    # Tìm thấy một alert chưa giải quyết trùng khớp
+                    return True
+        return False
+
     def create_alert(self, typ, chat_id, asked_for=None):
-        import time
         current_time = time.time()
-        # Check for an existing unresolved alert within the debounce period
+        # Logic debounce này vẫn hữu ích để tránh tạo alert trùng lặp trong tích tắc
         for alert in self.active.values():
             if (alert['type'] == typ and str(alert['chat_id']) == str(chat_id) and 
                 not alert['resolved'] and (current_time - alert['ts'] < DEBOUNCE_SECONDS)):
-                return alert['id']
+                # Nếu là người quen, phải check cả tên
+                if typ == 'nguoi_quen' and alert['asked_for'] == asked_for:
+                    return alert['id']
+                elif typ != 'nguoi_quen':
+                    return alert['id']
+
         aid = uuid.uuid4().hex
         info = {"id": aid, "type": typ, "chat_id": chat_id, "asked_for": asked_for, "ts": current_time, "resolved": False, "reply": None}
         with self.lock:

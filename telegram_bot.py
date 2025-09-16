@@ -24,8 +24,12 @@ state = StateManager()
 response_queue = queue.Queue()
  
 # --- logging ---
-logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("telegram_bot")
+# Sửa đổi logging để đảm bảo nó hoạt động nhất quán
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
+)
+logger = logging.getLogger(__name__)
  
 # --- helper: create Bot instance for direct sends (used by other modules if needed) ---
 _bot_instance: Optional[Bot] = None
@@ -36,16 +40,10 @@ def get_bot():
     return _bot_instance
  
 # --- AI chat helper (async) ---
-# Uses OpenAI Chat Completions REST endpoint via httpx.
-# You can replace body/headers to match Gemini if you prefer.
 AI_MODEL = os.getenv("AI_MODEL", "gpt-3.5-turbo")
  
 async def ai_chat_async(prompt: str, user_info: dict = None) -> str:
-    """
-    Call OpenAI chat completions (REST). If OPENAI_API_KEY not set, returns a helpful message.
-    """
     if not OPENAI_API_KEY:
-        # fallback: short echo/notice
         return "AI chưa được cấu hình (OPENAI_API_KEY missing)."
  
     headers = {"Authorization": f"Bearer {OPENAI_API_KEY}", "Content-Type": "application/json"}
@@ -61,10 +59,9 @@ async def ai_chat_async(prompt: str, user_info: dict = None) -> str:
  
     try:
         async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT) as client:
-            r = await client.post("https://a...content-available-to-author-only...i.com/v1/chat/completions", headers=headers, json=payload)
+            r = await client.post("https://api.openai.com/v1/chat/completions", headers=headers, json=payload)
             r.raise_for_status()
             data = r.json()
-            # defensive access
             if "choices" in data and len(data["choices"]) > 0:
                 msg = data["choices"][0].get("message", {}).get("content", "")
                 return (msg or "").strip()
@@ -87,18 +84,25 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
  
 # --- message listener: handles alert replies OR AI chat (fallback) ---
 async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # normalize text
-    text_raw = update.message.text if update.message and update.message.text else ""
+    # <--- THAY ĐỔI: Thêm logging chẩn đoán ngay từ đầu --->
+    logger.info("--- message_listener triggered ---")
+    if not update or not update.message:
+        logger.warning("message_listener: update hoặc update.message is None.")
+        return
+
+    text_raw = update.message.text if update.message.text else ""
+    chat_id = str(update.message.chat_id)
+    logger.info(f"Received message in chat_id: {chat_id}, text: '{text_raw}'")
+    
     text = text_raw.strip()
-    chat_id = str(update.message.chat_id) if update.message else None
     user = update.effective_user
     user_info = {"id": user.id, "username": user.username, "name": f"{user.first_name} {user.last_name or ''}".strip()} if user else {}
  
     # check for unresolved alert in this chat
     matched = state.latest_unresolved_for_chat(chat_id)
- 
+    
     if matched:
-        # handle alert replies using same simple rule-based logic as before
+        logger.info(f"Found matching unresolved alert: {matched['id']} (type: {matched['type']})")
         txt_lower = text.lower()
         neg = ["không", "ko", "k", "no", "not"]
         pos = ["có", "co", "yes", "đúng", "ok", "đúng rồi", "cos"]
@@ -112,7 +116,8 @@ async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
         elif any(tok in txt_lower for tok in neg):
             decision = "no"
  
-        # resolve and push to response queue
+        logger.info(f"Decision based on text: '{decision}'")
+        
         state.resolve_alert(matched["id"], text)
         response_queue.put({
             "alert_id": matched["id"],
@@ -121,45 +126,36 @@ async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "user": user_info
         })
  
-        if update.message:
-            reply_text = f"Đã ghi nhận: {text} (xử lý={decision})"
+        try:
+            reply_text = f"✅ Đã ghi nhận: '{text}' (xử lý={decision})"
             await update.message.reply_text(reply_text)
+            logger.info("Confirmation reply sent successfully.")
+        except Exception as e:
+            logger.error(f"Failed to send confirmation reply: {e}")
         return
  
-    # --- No alert found -> handle as AI chat (if AI enabled) ---
-    # Note: keep short-circuit if empty text (ignore)
+    logger.info("No unresolved alert found for this chat. Treating as normal message/AI chat.")
     if not text:
         return
  
-    # Indicate typing action (optional)
     try:
         await context.bot.send_chat_action(chat_id=update.effective_chat.id, action="typing")
     except Exception:
         pass
  
-    # Call AI (await)
-    if OPENAI_API_KEY:
+    if AI_ENABLED:
         ai_reply = await ai_chat_async(text, user_info=user_info)
     else:
-        # fallback: simple echo or helpful message
         ai_reply = f"[AI chưa cấu hình] Bạn vừa gửi: {text}\nThiết lập OPENAI_API_KEY để bot trả lời thông minh hơn."
  
-    # reply back
-    if update.message:
-        # split long reply into multiple messages if needed
-        MAX_LEN = 4000
-        if len(ai_reply) <= MAX_LEN:
-            await update.message.reply_text(ai_reply)
-        else:
-            # chunk and send
-            for i in range(0, len(ai_reply), MAX_LEN):
-                await update.message.reply_text(ai_reply[i:i+MAX_LEN])
+    MAX_LEN = 4000
+    if len(ai_reply) <= MAX_LEN:
+        await update.message.reply_text(ai_reply)
+    else:
+        for i in range(0, len(ai_reply), MAX_LEN):
+            await update.message.reply_text(ai_reply[i:i+MAX_LEN])
  
-# --- utility run function (same pattern as your project) ---
 def run_bot():
-    """
-    Start the telegram bot polling. This is blocking (so call inside a thread if needed).
-    """
     asyncio.set_event_loop(asyncio.new_event_loop())
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
  
@@ -167,5 +163,5 @@ def run_bot():
     app.add_handler(CommandHandler("status", status_cmd))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_listener))
  
-    logger.info("[telegram_bot] start polling...")
+    logger.info("Telegram bot starting polling...")
     app.run_polling()

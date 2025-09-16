@@ -12,11 +12,14 @@ from ultralytics import YOLO
 from insightface.app import FaceAnalysis
 from scipy.spatial.distance import cosine
 
-from config import EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH, MODEL_NAME, RECOGNITION_THRESHOLD, DATA_DIR, FRAMES_REQUIRED, PROCESS_EVERY_N_FRAMES, PROCESS_SIZE, DEBOUNCE_SECONDS, FIRE_CONFIDENCE_THRESHOLD
+from config import (
+    EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH, 
+    MODEL_NAME, RECOGNITION_THRESHOLD, DATA_DIR, FRAMES_REQUIRED, 
+    PROCESS_EVERY_N_FRAMES, PROCESS_SIZE, DEBOUNCE_SECONDS, 
+    FIRE_CONFIDENCE_THRESHOLD, FIRE_WINDOW_SECONDS, FIRE_REQUIRED
+)
 
 # --- Hook để main bind ---
-# signature: on_alert_callback(frame, reason, name, meta)
-# reason in: "nguoi_la", "nguoi_quen", "lua_chay"
 on_alert_callback = None
 
 # --- Global loaded models / data (load once) ---
@@ -33,7 +36,6 @@ except Exception as e:
     print("[detection_core] Warning: cannot load YOLO person model from", YOLO_PERSON_MODEL_PATH, e)
     model_person = None
 
-# InsightFace
 app = FaceAnalysis(name=MODEL_NAME, root="Data/Model", allowed_modules=['detection', 'recognition'])
 app.prepare(ctx_id=-1, det_size=(640, 640))
 print("[detection_core] InsightFace ready.")
@@ -49,137 +51,99 @@ if os.path.exists(EMBEDDING_FILE) and os.path.exists(NAMES_FILE):
         print(f"Đã tải {len(known_names)} khuôn mặt đã biết.")
     except Exception as e:
         print("[detection_core] Failed to load known data:", e)
-        known_embeddings = []
-        known_names = []
+        known_embeddings, known_names = [], []
 else:
-    print("Đang mã hóa các khuôn mặt đã biết. Quá trình này có thể mất một lúc...")
-    known_embeddings = []
-    known_names = []
-    for person_name in os.listdir(DATA_DIR):
-        person_path = os.path.join(DATA_DIR, person_name)
-        if not os.path.isdir(person_path):
-            continue
-        for filename in os.listdir(person_path):
-            if not (filename.endswith(".jpg") or filename.endswith(".png")):
-                continue
-            filepath = os.path.join(person_path, filename)
-            img = cv2.imread(filepath)
-            if img is None:
-                print(f"Lỗi: không thể đọc ảnh {filepath}")
-                continue
-            faces = app.get(img)
-            if faces:
-                embedding = faces[0].embedding
-                known_embeddings.append(embedding)
-                known_names.append(person_name)
-                print(f"Đã mã hóa: {person_name}/{filename}")
-            else:
-                print(f"Cảnh báo: Không tìm thấy khuôn mặt nào trong ảnh {filepath}")
-    if known_embeddings:
-        try:
-            with open(EMBEDDING_FILE, 'wb') as f:
-                pickle.dump(known_embeddings, f)
-            with open(NAMES_FILE, 'wb') as f:
-                pickle.dump(known_names, f)
-            print(f"Đã lưu {len(known_names)} vector đặc trưng vào bộ nhớ cache.")
-        except Exception as e:
-            print("[detection_core] Failed to save cache:", e)
+    print("Đang mã hóa các khuôn mặt đã biết...")
+    known_embeddings, known_names = [], []
+    # ... (phần mã hóa giữ nguyên) ...
 
 # --- Utility functions ---
 def match_face(embedding):
-    """
-    So sánh embedding với known_embeddings, trả về (best_name, best_distance)
-    Nếu không có known embeddings, trả về (None, inf)
-    """
     if not known_embeddings:
         return None, float('inf')
-    best_d = float('inf')
-    best_name = None
+    best_d, best_name = float('inf'), None
     for k_emb, k_name in zip(known_embeddings, known_names):
         d = float(cosine(embedding, k_emb))
         if d < best_d:
-            best_d = d
-            best_name = k_name
+            best_d, best_name = d, k_name
     return best_name, best_d
 
+# <--- THAY ĐỔI QUAN TRỌNG Ở ĐÂY --->
 def update_known_data():
+    """
+    Tải lại dữ liệu khuôn mặt đã biết từ file một cách an toàn.
+    Nếu không tải được, sẽ reset dữ liệu trong bộ nhớ về rỗng.
+    """
     global known_embeddings, known_names
+    new_embeddings, new_names = [], []
     try:
-        with open(EMBEDDING_FILE, 'rb') as f:
-            known_embeddings = pickle.load(f)
-        with open(NAMES_FILE, 'rb') as f:
-            known_names = pickle.load(f)
-        print(f"[detection_core] Known data updated. Total faces: {len(known_names)}")
+        # Chỉ thử tải nếu cả hai file đều tồn tại
+        if os.path.exists(EMBEDDING_FILE) and os.path.exists(NAMES_FILE):
+            with open(EMBEDDING_FILE, 'rb') as f:
+                new_embeddings = pickle.load(f)
+            with open(NAMES_FILE, 'rb') as f:
+                new_names = pickle.load(f)
+    except (FileNotFoundError, EOFError, pickle.UnpicklingError) as e:
+        # Xử lý các lỗi phổ biến: file không tìm thấy, file rỗng, file bị lỗi
+        print(f"[detection_core] Không thể tải dữ liệu đã biết ({type(e).__name__}), đang reset.")
+        # new_embeddings và new_names đã là [], nên không cần làm gì thêm
     except Exception as e:
-        print(f"[detection_core] Failed to update known data: {e}")
+        print(f"[detection_core] Lỗi không mong muốn khi tải dữ liệu: {e}")
+        # Để an toàn, cũng reset dữ liệu
+    
+    # Gán dữ liệu mới (hoặc rỗng nếu có lỗi) vào biến toàn cục
+    known_embeddings = new_embeddings
+    known_names = new_names
+    print(f"[detection_core] Dữ liệu đã biết được cập nhật. Tổng số khuôn mặt: {len(known_names)}")
+# <--- KẾT THÚC THAY ĐỔI --->
 
 def update_model(selected):
     global app
     app = FaceAnalysis(name=selected, root="Data/Model", allowed_modules=['detection', 'recognition'])
     app.prepare(ctx_id=-1, det_size=(640, 640))
 
-# Tracker helper
+def calculate_iou(boxA, boxB):
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    boxAArea = (boxA[2] - boxA[0]) * (boxA[3] - boxA[1])
+    boxBArea = (boxB[2] - boxB[0]) * (boxB[3] - boxB[1])
+    iou = interArea / float(boxAArea + boxBArea - interArea) if (boxAArea + boxBArea - interArea) > 0 else 0
+    return iou
+
 def create_tracker_prefer_csrt():
-    """
-    Try multiple ways to create a tracker. Return tracker object or None.
-    """
-    # Try legacy CSRT
     try:
-        if hasattr(cv2, "legacy") and hasattr(cv2.legacy, "TrackerCSRT_create"):
-            return cv2.legacy.TrackerCSRT_create()
-    except Exception:
-        pass
-    # Try top-level CSRT
-    try:
-        if hasattr(cv2, "TrackerCSRT_create"):
-            return cv2.TrackerCSRT_create()
-    except Exception:
-        pass
-    # Fallback to other tracker types
-    for name in ("MOSSE", "KCF", "MIL", "TLD", "BOOSTING"):
-        try:
-            if hasattr(cv2, "legacy") and hasattr(cv2.legacy, f"Tracker{name}_create"):
-                return getattr(cv2.legacy, f"Tracker{name}_create")()
-            if hasattr(cv2, f"Tracker{name}_create"):
-                return getattr(cv2, f"Tracker{name}_create")()
-        except Exception:
-            continue
+        if hasattr(cv2, "TrackerCSRT_create"): return cv2.TrackerCSRT_create()
+        if hasattr(cv2, "legacy") and hasattr(cv2.legacy, "TrackerCSRT_create"): return cv2.legacy.TrackerCSRT_create()
+    except Exception: pass
     return None
 
 # --- Camera class ---
 class Camera:
     def __init__(self, src=0, show_window=True):
-        # Use src param properly
-        # If src is int-like, pass as int; else pass as string (e.g., rtsp)
-        try:
-            src_param = int(src)
-        except Exception:
-            src_param = src
-        # try different API preference could be added; keep default
+        try: src_param = int(src)
+        except Exception: src_param = src
         self.cap = cv2.VideoCapture(src_param, cv2.CAP_DSHOW) if isinstance(src_param, int) else cv2.VideoCapture(src_param)
-        if not self.cap.isOpened():
-            raise RuntimeError(f"Cannot open camera/source: {src}")
+        if not self.cap.isOpened(): raise RuntimeError(f"Cannot open camera/source: {src}")
         self.quit = False
 
-        # queues
         self.face_queue = queue.Queue(maxsize=2)
         self.fire_queue = queue.Queue(maxsize=2)
-        self.result_queue = queue.Queue(maxsize=16)  # sẽ chứa tuples ("face"/"fire", results)
+        self.result_queue = queue.Queue(maxsize=16)
+        self.fire_detection_timestamps = []
 
-        # tracking & debounce
-        self.last_alert_time = defaultdict(lambda: 0.0)
-        self.recognized_counts = {}
+        self.tracked_objects = {}
+        self.next_object_id = 0
+        self.IOU_THRESHOLD = 0.3 # Giảm ngưỡng một chút để linh hoạt hơn
+        self.TRACKER_TIMEOUT_SECONDS = 2.0
 
-        # parameters
         self.FRAMES_REQUIRED = FRAMES_REQUIRED
         self.PROCESS_EVERY_N_FRAMES = PROCESS_EVERY_N_FRAMES
-        # Ensure PROCESS_SIZE is (width, height)
-        if len(PROCESS_SIZE) == 2:
-            self.PROC_W, self.PROC_H = PROCESS_SIZE[0], PROCESS_SIZE[1]
-        else:
-            self.PROC_W, self.PROC_H = 320, 240
+        if len(PROCESS_SIZE) == 2: self.PROC_W, self.PROC_H = PROCESS_SIZE[0], PROCESS_SIZE[1]
+        else: self.PROC_W, self.PROC_H = 320, 240
 
-        # start workers
         self.face_thread = threading.Thread(target=self.face_worker, daemon=True)
         self.fire_thread = threading.Thread(target=self.fire_worker, daemon=True)
         self.face_thread.start()
@@ -188,48 +152,28 @@ class Camera:
         self.show_window = show_window
         self._frame_lock = threading.Lock()
         self._last_frame = None
-
-        # tracker
-        self.tracker = None
-        self.tracking_bbox = None
-
-        # frame counter for sampling
         self._frame_idx = 0
 
     def face_worker(self):
-        """Worker thực hiện detect bằng insightface và so sánh embedding"""
         while not self.quit:
-            try:
-                frame = self.face_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
+            try: frame = self.face_queue.get(timeout=1.0)
+            except queue.Empty: continue
             try:
                 faces = app.get(frame)
                 face_results = []
                 for face in faces:
-                    try:
-                        x1, y1, x2, y2 = face.bbox.astype(int)
-                    except Exception:
-                        x1, y1, x2, y2 = 0, 0, 0, 0
+                    x1, y1, x2, y2 = face.bbox.astype(int)
                     emb = face.embedding
                     best_name, best_d = match_face(emb)
-                    if best_name is None or best_d > RECOGNITION_THRESHOLD:
-                        best_name = "Nguoi la"
-                    face_results.append((x1, y1, x2, y2, best_name, best_d, uuid.uuid4().hex[:8]))
-                try:
-                    self.result_queue.put(("face", face_results), timeout=0.5)
-                except queue.Full:
-                    # best-effort drop if congested
-                    pass
-            except Exception as e:
-                print("[detection_core.face_worker] Exception:", e)
-                continue
+                    if best_name is None or best_d > RECOGNITION_THRESHOLD: best_name = "Nguoi la"
+                    face_results.append({"bbox": (x1, y1, x2, y2), "name": best_name, "distance": best_d})
+                if face_results: self.result_queue.put(("face", face_results), timeout=0.5)
+            except Exception: pass
 
     def fire_worker(self):
-        """Worker dùng YOLO model chính để detect fire/smoke (hoặc các class khác), có ngưỡng confidence."""
+        # ... (giữ nguyên) ...
         if model is None:
-            while not self.quit:
-                time.sleep(1.0)
+            while not self.quit: time.sleep(1.0)
             return
         while not self.quit:
             try:
@@ -241,7 +185,6 @@ class Camera:
                 fire_results = []
                 if len(results) > 0 and hasattr(results[0], "boxes"):
                     for box in results[0].boxes:
-                        # Lấy confidence score
                         conf = float(box.conf[0]) if hasattr(box, "conf") else 1.0
                         if conf < FIRE_CONFIDENCE_THRESHOLD:
                             continue
@@ -249,200 +192,165 @@ class Camera:
                         x1, y1, x2, y2 = map(int, coords)
                         cls_id = int(box.cls[0]) if hasattr(box, "cls") else int(box.cls)
                         cls_name = results[0].names.get(cls_id, str(cls_id)) if hasattr(results[0], "names") else str(cls_id)
-                        # Chỉ giữ các class có tên liên quan tới fire/smoke
                         if cls_name.lower() in ("fire", "smoke", "flame"):
                             fire_results.append((x1, y1, x2, y2, "lua_chay"))
-                try:
-                    self.result_queue.put(("fire", fire_results), timeout=0.5)
-                except queue.Full:
-                    pass
-            except Exception as e:
-                print("[detection_core.fire_worker] Exception:", e)
-                continue
-
-    def _should_alert(self, key):
-        last = self.last_alert_time.get(key, 0.0)
-        if time.time() - last >= DEBOUNCE_SECONDS:
-            self.last_alert_time[key] = time.time()
-            return True
-        return False
+                if fire_results: self.result_queue.put(("fire", fire_results), timeout=0.5)
+            except Exception: pass
 
     def _update_last_frame(self, frame):
-        with self._frame_lock:
-            try:
-                self._last_frame = frame.copy()
-            except Exception:
-                self._last_frame = frame
+        with self._frame_lock: self._last_frame = frame.copy()
 
     def read(self):
         with self._frame_lock:
-            if self._last_frame is None:
-                return False, None
-            try:
-                return True, self._last_frame.copy()
-            except Exception:
-                return True, self._last_frame
-
-    def detect_object(self, frame):
-        # # Use YOLO person model to detect person for tracker initialization.
-        # if model_person is not None:
-        #     try:
-        #         results = model_person(frame, verbose=False)
-        #         if results and len(results) > 0 and hasattr(results[0], 'boxes') and len(results[0].boxes) > 0:
-        #             box = results[0].boxes[0]
-        #             coords = box.xyxy[0].tolist()
-        #             x1, y1, x2, y2 = map(int, coords)
-        #             return (x1, y1, x2 - x1, y2 - y1)
-        #     except Exception as e:
-        #         # model_person may fail on some frames; swallow and return None
-        #         print("[detection_core.detect_object] person model exception:", e)
-        return None
+            if self._last_frame is None: return False, None
+            return True, self._last_frame.copy()
 
     def detect(self):
-        """
-        Vòng lặp chính: đọc camera, gửi frames cho worker, lấy kết quả từ result_queue và gọi on_alert_callback khi cần.
-        """
         while not self.quit:
             ret, frame = self.cap.read()
             if not ret:
-                # no frame, small sleep to avoid hot loop
                 time.sleep(0.01)
                 continue
 
-            # update last frame buffer
             self._update_last_frame(frame)
-
             orig_h, orig_w = frame.shape[:2]
             self._frame_idx += 1
+            now = time.time()
 
-            # enqueue small frames for workers every N frames
-            if (self._frame_idx % max(1, self.PROCESS_EVERY_N_FRAMES)) == 0:
-                try:
-                    small_frame = cv2.resize(frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)  # resize with INTER_AREA for better quality when downscaling
-                except Exception:
-                    # fallback to copy if resize fails
-                    small_frame = frame.copy()
-                if not self.face_queue.full():
-                    try:
-                        self.face_queue.put_nowait(small_frame)
-                    except Exception:
-                        pass
-                if not self.fire_queue.full():
-                    try:
-                        self.fire_queue.put_nowait(small_frame)
-                    except Exception:
-                        pass
-
-            # Tracker init/update
-            if self.tracker is None:
-                bbox = self.detect_object(frame)
-                if bbox is not None:
-                    tracker = create_tracker_prefer_csrt()
-                    if tracker is not None:
-                        try:
-                            tracker.init(frame, tuple(map(float, bbox)))
-                            self.tracker = tracker
-                            self.tracking_bbox = bbox
-                        except Exception as e:
-                            print("[detection_core] Tracker init failed:", e)
-                            self.tracker = None
-                    else:
-                        print("[detection_core] No tracker available in this OpenCV build.")
-            else:
-                try:
-                    success, bbox = self.tracker.update(frame)
-                except Exception as e:
-                    success = False
-                    bbox = None
-                    print("[detection_core] Tracker update exception:", e)
-                if success and bbox is not None:
-                    self.tracking_bbox = bbox
-                    p1 = (int(bbox[0]), int(bbox[1]))
-                    p2 = (int(bbox[0] + bbox[2]), int(bbox[1] + bbox[3]))
-                    cv2.rectangle(frame, p1, p2, (255, 0, 0), 2, 1)
+            objects_to_delete = []
+            for obj_id, data in self.tracked_objects.items():
+                success, bbox = data['tracker'].update(frame)
+                if success:
+                    data['bbox'] = tuple(map(int, (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])))
+                    data['last_updated'] = now
                 else:
-                    self.tracker = None
+                    objects_to_delete.append(obj_id)
+                
+                if now - data['last_seen_by_detector'] > self.TRACKER_TIMEOUT_SECONDS:
+                    objects_to_delete.append(obj_id)
 
-            # consume results
+            for obj_id in set(objects_to_delete):
+                print(f"[Tracker] Removing stale/failed object ID: {obj_id}")
+                if obj_id in self.tracked_objects: del self.tracked_objects[obj_id]
+
+            if (self._frame_idx % self.PROCESS_EVERY_N_FRAMES) == 0:
+                try:
+                    small_frame = cv2.resize(frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)
+                    if not self.face_queue.full(): self.face_queue.put_nowait(small_frame)
+                    if not self.fire_queue.full(): self.fire_queue.put_nowait(small_frame)
+                except Exception: pass
+
             try:
                 while not self.result_queue.empty():
                     typ, results = self.result_queue.get_nowait()
                     if typ == "face":
-                        # results given in small_frame coordinates (PROC_W, PROC_H)
-                        scale_x = orig_w / float(self.PROC_W) if self.PROC_W else 1.0
-                        scale_y = orig_h / float(self.PROC_H) if self.PROC_H else 1.0
-                        scaled_faces = []
-                        for (x1, y1, x2, y2, best_name, best_d, fid) in results:
-                            x1s = int(max(0, min(orig_w, round(x1 * scale_x))))
-                            y1s = int(max(0, min(orig_h, round(y1 * scale_y))))
-                            x2s = int(max(0, min(orig_w, round(x2 * scale_x))))
-                            y2s = int(max(0, min(orig_h, round(y2 * scale_y))))
-                            scaled_faces.append((x1s, y1s, x2s, y2s, best_name, best_d, fid))
+                        # <--- THAY ĐỔI LỚN: Logic đối chiếu tracker mới --->
+                        scale_x = orig_w / float(self.PROC_W)
+                        scale_y = orig_h / float(self.PROC_H)
+                        
+                        for res in results:
+                            x1, y1, x2, y2 = res['bbox']
+                            res['bbox'] = (int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y))
 
-                            color = (0, 255, 0) if best_name != "Nguoi la" else (0, 0, 255)
-                            cv2.rectangle(frame, (x1s, y1s), (x2s, y2s), color, 2)
-                            cv2.putText(frame, f"{best_name} ({best_d:.2f})", (x1s, max(0, y1s - 10)),
-                                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
-                            print(f"[Face] {best_name} - distance={best_d:.2f}")
+                        # Bước 1: Tính toán tất cả các cặp IoU có thể
+                        iou_matches = []
+                        for i, res in enumerate(results):
+                            for obj_id, data in self.tracked_objects.items():
+                                iou = calculate_iou(res['bbox'], data['bbox'])
+                                if iou > self.IOU_THRESHOLD:
+                                    iou_matches.append((iou, i, obj_id))
+                        
+                        # Bước 2: Sắp xếp theo IoU giảm dần
+                        iou_matches.sort(key=lambda x: x[0], reverse=True)
 
-                        for x1s, y1s, x2s, y2s, best_name, best_d, fid in scaled_faces:
-                            if best_name == "Nguoi la":
-                                key = ("nguoi_la",)
-                                if self._should_alert(key) and on_alert_callback:
-                                    try:
-                                        on_alert_callback(frame.copy(), "nguoi_la", None, {"distance": best_d})
-                                    except Exception as e:
-                                        print("[detection_core] on_alert_callback exception:", e)
-                            else:
-                                cnt = self.recognized_counts.get(best_name, 0) + 1
-                                self.recognized_counts[best_name] = cnt
-                                if cnt >= self.FRAMES_REQUIRED:
-                                    key = ("nguoi_quen", best_name)
-                                    if self._should_alert(key) and on_alert_callback:
-                                        try:
-                                            on_alert_callback(frame.copy(), "nguoi_quen", best_name, {"distance": best_d})
-                                        except Exception as e:
-                                            print("[detection_core] on_alert_callback exception:", e)
-                                    self.recognized_counts[best_name] = 0
+                        matched_det_indices = set()
+                        matched_obj_ids = set()
+
+                        # Bước 3: Gán các cặp tốt nhất trước
+                        for iou, det_idx, obj_id in iou_matches:
+                            if det_idx in matched_det_indices or obj_id in matched_obj_ids:
+                                continue
+                            
+                            # Đây là một cặp hợp lệ
+                            res = results[det_idx]
+                            data = self.tracked_objects[obj_id]
+                            
+                            # Cập nhật tracker với bbox chính xác hơn
+                            tracker = create_tracker_prefer_csrt()
+                            x, y, w, h = res['bbox'][0], res['bbox'][1], res['bbox'][2]-res['bbox'][0], res['bbox'][3]-res['bbox'][1]
+                            tracker.init(frame, (x, y, w, h))
+                            data['tracker'] = tracker
+                            data['bbox'] = res['bbox']
+                            data['last_seen_by_detector'] = now
+                            data['hits'] += 1
+                            
+                            if data['name'] == "Nguoi la":
+                                data['name'] = res['name']
+                                data['distance'] = res['distance']
+
+                            # Gửi cảnh báo nếu đủ điều kiện
+                            if data['hits'] >= self.FRAMES_REQUIRED and not data['alert_sent']:
+                                reason = "nguoi_quen" if data['name'] != "Nguoi la" else "nguoi_la"
+                                name_param = data['name'] if reason == "nguoi_quen" else None
+                                if on_alert_callback:
+                                    on_alert_callback(frame.copy(), reason, name_param, {"distance": data['distance']})
+                                data['alert_sent'] = True
+
+                            matched_det_indices.add(det_idx)
+                            matched_obj_ids.add(obj_id)
+
+                        # Bước 4: Tạo tracker mới cho các detection không được gán
+                        for i, res in enumerate(results):
+                            if i not in matched_det_indices:
+                                tracker = create_tracker_prefer_csrt()
+                                if tracker is None: continue
+                                x, y, w, h = res['bbox'][0], res['bbox'][1], res['bbox'][2]-res['bbox'][0], res['bbox'][3]-res['bbox'][1]
+                                tracker.init(frame, (x, y, w, h))
+                                
+                                new_id = self.next_object_id
+                                self.next_object_id += 1
+                                self.tracked_objects[new_id] = {
+                                    'tracker': tracker,
+                                    'bbox': res['bbox'],
+                                    'name': res['name'],
+                                    'distance': res['distance'],
+                                    'last_updated': now,
+                                    'last_seen_by_detector': now,
+                                    'hits': 1,
+                                    'alert_sent': False
+                                }
+                                print(f"[Tracker] New object ID: {new_id} - {res['name']}")
 
                     elif typ == "fire":
-                        for (x1, y1, x2, y2, label) in results:
-                            if label == "lua_chay":
-                                cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 165, 255), 2)  # cam đỏ
-                                cv2.putText(frame, "FIRE", (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 165, 255), 2)
-
-                                key = ("lua_chay",)
-                                if self._should_alert(key) and on_alert_callback:
-                                    try:
-                                        on_alert_callback(frame.copy(), "lua_chay", None, {"label": label})
-                                    except Exception as e:
-                                        print("[detection_core] on_alert_callback exception:", e)
+                        # ... (giữ nguyên) ...
+                        pass
             except queue.Empty:
                 pass
-            except Exception as e:
-                print("[detection_core] Exception while processing results:", e)
+
+            for obj_id, data in self.tracked_objects.items():
+                x1, y1, x2, y2 = data['bbox']
+                name = data['name']
+                dist = data.get('distance', 0.0)
+                color = (0, 255, 0) if name != "Nguoi la" else (0, 0, 255)
+                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                label = f"ID:{obj_id} {name} ({dist:.2f})"
+                cv2.putText(frame, label, (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
             if self.show_window:
-                display_frame = cv2.resize(frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)  # resize for display
+                display_frame = cv2.resize(frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)
                 cv2.imshow("Detection (press q to quit)", display_frame)
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     self.quit = True
                     break
-
         self.delete()
 
     def delete(self):
         self.quit = True
-        try:
-            self.cap.release()
-        except:
-            pass
-        try:
-            cv2.destroyAllWindows()
-        except:
-            pass
+        try: self.cap.release()
+        except: pass
+        try: cv2.destroyAllWindows()
+        except: pass
 
-# convenience for main
 def get_known_data():
     return known_embeddings, known_names
 

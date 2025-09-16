@@ -7,7 +7,7 @@ import pickle
 from PIL import Image
 
 # --- Import thật từ dự án của bạn ---
-from detection_core import update_known_data, update_model
+from detection_core import update_known_data, update_model, app
 from config import EMBEDDING_FILE, NAMES_FILE, DATA_DIR
 # ------------------------------------
 
