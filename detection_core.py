@@ -16,8 +16,10 @@ from config import (
     EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH, 
     MODEL_NAME, RECOGNITION_THRESHOLD, DATA_DIR, FRAMES_REQUIRED, 
     PROCESS_EVERY_N_FRAMES, PROCESS_SIZE, DEBOUNCE_SECONDS, 
-    FIRE_CONFIDENCE_THRESHOLD, FIRE_WINDOW_SECONDS, FIRE_REQUIRED
+    FIRE_CONFIDENCE_THRESHOLD, FIRE_WINDOW_SECONDS, FIRE_REQUIRED,
+    MODEL_DIR # <--- THÊM DÒNG NÀY
 )
+from shared_state import state as sm
 
 # --- Hook để main bind ---
 on_alert_callback = None
@@ -25,13 +27,17 @@ on_alert_callback = None
 # --- Global loaded models / data (load once) ---
 print("[detection_core] Loading models...")
 try:
+    # Model này dùng cho phát hiện lửa/khói
     model = YOLO(YOLO_MODEL_PATH, task='detect')
+    print(f"[detection_core] Loaded Fire/Smoke YOLO model from: {YOLO_MODEL_PATH}")
 except Exception as e:
     print("[detection_core] Warning: cannot load YOLO model from", YOLO_MODEL_PATH, e)
     model = None
 
 try:
+    # Model này dùng cho phát hiện người (thay thế cho face detection khi cần)
     model_person = YOLO(YOLO_PERSON_MODEL_PATH)
+    print(f"[detection_core] Loaded Person YOLO model from: {YOLO_PERSON_MODEL_PATH}")
 except Exception as e:
     print("[detection_core] Warning: cannot load YOLO person model from", YOLO_PERSON_MODEL_PATH, e)
     model_person = None
@@ -53,9 +59,9 @@ if os.path.exists(EMBEDDING_FILE) and os.path.exists(NAMES_FILE):
         print("[detection_core] Failed to load known data:", e)
         known_embeddings, known_names = [], []
 else:
-    print("Đang mã hóa các khuôn mặt đã biết...")
+    print("Không tìm thấy file dữ liệu, khởi tạo danh sách rỗng.")
     known_embeddings, known_names = [], []
-    # ... (phần mã hóa giữ nguyên) ...
+
 
 # --- Utility functions ---
 def match_face(embedding):
@@ -68,7 +74,6 @@ def match_face(embedding):
             best_d, best_name = d, k_name
     return best_name, best_d
 
-# <--- THAY ĐỔI QUAN TRỌNG Ở ĐÂY --->
 def update_known_data():
     """
     Tải lại dữ liệu khuôn mặt đã biết từ file một cách an toàn.
@@ -77,30 +82,55 @@ def update_known_data():
     global known_embeddings, known_names
     new_embeddings, new_names = [], []
     try:
-        # Chỉ thử tải nếu cả hai file đều tồn tại
         if os.path.exists(EMBEDDING_FILE) and os.path.exists(NAMES_FILE):
             with open(EMBEDDING_FILE, 'rb') as f:
                 new_embeddings = pickle.load(f)
             with open(NAMES_FILE, 'rb') as f:
                 new_names = pickle.load(f)
     except (FileNotFoundError, EOFError, pickle.UnpicklingError) as e:
-        # Xử lý các lỗi phổ biến: file không tìm thấy, file rỗng, file bị lỗi
         print(f"[detection_core] Không thể tải dữ liệu đã biết ({type(e).__name__}), đang reset.")
-        # new_embeddings và new_names đã là [], nên không cần làm gì thêm
     except Exception as e:
         print(f"[detection_core] Lỗi không mong muốn khi tải dữ liệu: {e}")
-        # Để an toàn, cũng reset dữ liệu
     
-    # Gán dữ liệu mới (hoặc rỗng nếu có lỗi) vào biến toàn cục
     known_embeddings = new_embeddings
     known_names = new_names
     print(f"[detection_core] Dữ liệu đã biết được cập nhật. Tổng số khuôn mặt: {len(known_names)}")
-# <--- KẾT THÚC THAY ĐỔI --->
 
 def update_model(selected):
     global app
     app = FaceAnalysis(name=selected, root="Data/Model", allowed_modules=['detection', 'recognition'])
     app.prepare(ctx_id=-1, det_size=(640, 640))
+
+# <--- THÊM HÀM MỚI DƯỚI ĐÂY --->
+def update_yolo_model(size: str):
+    """Tải lại các model YOLO với kích thước được chỉ định ('small' hoặc 'medium')."""
+    global model, model_person
+    print(f"[detection_core] Yêu cầu chuyển đổi model YOLO sang kích thước: '{size}'")
+    
+    if size not in ["small", "medium"]:
+        print(f"[detection_core] Lỗi: Kích thước model không hợp lệ: {size}. Phải là 'small' hoặc 'medium'.")
+        return
+
+    fire_path = os.path.join(MODEL_DIR, size.capitalize(), "Fire", f"{size}_openvino_model")
+    person_path = os.path.join(MODEL_DIR, size.capitalize(), "Person", f"{size}_openvino_model")
+
+    try:
+        print(f"Đang tải model Lửa/Khói mới từ: {fire_path}")
+        model = YOLO(fire_path, task='detect')
+        print("Tải model Lửa/Khói thành công.")
+    except Exception as e:
+        print(f"Lỗi khi tải model Lửa/Khói từ '{fire_path}': {e}")
+        model = None
+
+    try:
+        print(f"Đang tải model Người mới từ: {person_path}")
+        model_person = YOLO(person_path)
+        print("Tải model Người thành công.")
+    except Exception as e:
+        print(f"Lỗi khi tải model Người từ '{person_path}': {e}")
+        model_person = None
+# <--- KẾT THÚC PHẦN THÊM MỚI --->
+
 
 def calculate_iou(boxA, boxB):
     xA = max(boxA[0], boxB[0])
@@ -136,7 +166,7 @@ class Camera:
 
         self.tracked_objects = {}
         self.next_object_id = 0
-        self.IOU_THRESHOLD = 0.3 # Giảm ngưỡng một chút để linh hoạt hơn
+        self.IOU_THRESHOLD = 0.3
         self.TRACKER_TIMEOUT_SECONDS = 2.0
 
         self.FRAMES_REQUIRED = FRAMES_REQUIRED
@@ -153,11 +183,18 @@ class Camera:
         self._frame_lock = threading.Lock()
         self._last_frame = None
         self._frame_idx = 0
+        
+        self.person_detection_was_on = True
 
     def face_worker(self):
         while not self.quit:
             try: frame = self.face_queue.get(timeout=1.0)
             except queue.Empty: continue
+            
+            if not sm.is_person_detection_enabled():
+                time.sleep(0.1)
+                continue
+
             try:
                 faces = app.get(frame)
                 face_results = []
@@ -171,11 +208,18 @@ class Camera:
             except Exception: pass
 
     def fire_worker(self):
-        # ... (giữ nguyên) ...
         if model is None:
-            while not self.quit: time.sleep(1.0)
-            return
+            print("[Fire Worker] Model is None, worker will sleep.")
+            while not self.quit: 
+                if model is not None:
+                    print("[Fire Worker] Model has been loaded, starting work.")
+                    break
+                time.sleep(1.0)
+
         while not self.quit:
+            if model is None: # Kiểm tra lại trong vòng lặp
+                time.sleep(1.0)
+                continue
             try:
                 frame = self.fire_queue.get(timeout=1.0)
             except queue.Empty:
@@ -217,34 +261,43 @@ class Camera:
             self._frame_idx += 1
             now = time.time()
 
-            objects_to_delete = []
-            for obj_id, data in self.tracked_objects.items():
-                success, bbox = data['tracker'].update(frame)
-                if success:
-                    data['bbox'] = tuple(map(int, (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])))
-                    data['last_updated'] = now
-                else:
-                    objects_to_delete.append(obj_id)
-                
-                if now - data['last_seen_by_detector'] > self.TRACKER_TIMEOUT_SECONDS:
-                    objects_to_delete.append(obj_id)
+            person_detection_is_on = sm.is_person_detection_enabled()
 
-            for obj_id in set(objects_to_delete):
-                print(f"[Tracker] Removing stale/failed object ID: {obj_id}")
-                if obj_id in self.tracked_objects: del self.tracked_objects[obj_id]
+            if not person_detection_is_on and self.person_detection_was_on:
+                self.tracked_objects.clear()
+                print("[Detection] Person detection disabled. Clearing trackers.")
+            
+            self.person_detection_was_on = person_detection_is_on
+            
+            if person_detection_is_on:
+                objects_to_delete = []
+                for obj_id, data in self.tracked_objects.items():
+                    success, bbox = data['tracker'].update(frame)
+                    if success:
+                        data['bbox'] = tuple(map(int, (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])))
+                        data['last_updated'] = now
+                    else:
+                        objects_to_delete.append(obj_id)
+                    
+                    if now - data['last_seen_by_detector'] > self.TRACKER_TIMEOUT_SECONDS:
+                        objects_to_delete.append(obj_id)
+
+                for obj_id in set(objects_to_delete):
+                    if obj_id in self.tracked_objects: del self.tracked_objects[obj_id]
 
             if (self._frame_idx % self.PROCESS_EVERY_N_FRAMES) == 0:
                 try:
                     small_frame = cv2.resize(frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)
-                    if not self.face_queue.full(): self.face_queue.put_nowait(small_frame)
-                    if not self.fire_queue.full(): self.fire_queue.put_nowait(small_frame)
+                    if person_detection_is_on and not self.face_queue.full(): 
+                        self.face_queue.put_nowait(small_frame)
+                    if not self.fire_queue.full(): 
+                        self.fire_queue.put_nowait(small_frame)
                 except Exception: pass
 
             try:
                 while not self.result_queue.empty():
                     typ, results = self.result_queue.get_nowait()
-                    if typ == "face":
-                        # <--- THAY ĐỔI LỚN: Logic đối chiếu tracker mới --->
+                    if typ == "face" and person_detection_is_on:
                         scale_x = orig_w / float(self.PROC_W)
                         scale_y = orig_h / float(self.PROC_H)
                         
@@ -252,7 +305,6 @@ class Camera:
                             x1, y1, x2, y2 = res['bbox']
                             res['bbox'] = (int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y))
 
-                        # Bước 1: Tính toán tất cả các cặp IoU có thể
                         iou_matches = []
                         for i, res in enumerate(results):
                             for obj_id, data in self.tracked_objects.items():
@@ -260,22 +312,18 @@ class Camera:
                                 if iou > self.IOU_THRESHOLD:
                                     iou_matches.append((iou, i, obj_id))
                         
-                        # Bước 2: Sắp xếp theo IoU giảm dần
                         iou_matches.sort(key=lambda x: x[0], reverse=True)
 
                         matched_det_indices = set()
                         matched_obj_ids = set()
 
-                        # Bước 3: Gán các cặp tốt nhất trước
                         for iou, det_idx, obj_id in iou_matches:
                             if det_idx in matched_det_indices or obj_id in matched_obj_ids:
                                 continue
                             
-                            # Đây là một cặp hợp lệ
                             res = results[det_idx]
                             data = self.tracked_objects[obj_id]
                             
-                            # Cập nhật tracker với bbox chính xác hơn
                             tracker = create_tracker_prefer_csrt()
                             x, y, w, h = res['bbox'][0], res['bbox'][1], res['bbox'][2]-res['bbox'][0], res['bbox'][3]-res['bbox'][1]
                             tracker.init(frame, (x, y, w, h))
@@ -288,7 +336,6 @@ class Camera:
                                 data['name'] = res['name']
                                 data['distance'] = res['distance']
 
-                            # Gửi cảnh báo nếu đủ điều kiện
                             if data['hits'] >= self.FRAMES_REQUIRED and not data['alert_sent']:
                                 reason = "nguoi_quen" if data['name'] != "Nguoi la" else "nguoi_la"
                                 name_param = data['name'] if reason == "nguoi_quen" else None
@@ -299,7 +346,6 @@ class Camera:
                             matched_det_indices.add(det_idx)
                             matched_obj_ids.add(obj_id)
 
-                        # Bước 4: Tạo tracker mới cho các detection không được gán
                         for i, res in enumerate(results):
                             if i not in matched_det_indices:
                                 tracker = create_tracker_prefer_csrt()
@@ -319,7 +365,6 @@ class Camera:
                                     'hits': 1,
                                     'alert_sent': False
                                 }
-                                print(f"[Tracker] New object ID: {new_id} - {res['name']}")
 
                     elif typ == "fire":
                         # ... (giữ nguyên) ...
@@ -327,14 +372,15 @@ class Camera:
             except queue.Empty:
                 pass
 
-            for obj_id, data in self.tracked_objects.items():
-                x1, y1, x2, y2 = data['bbox']
-                name = data['name']
-                dist = data.get('distance', 0.0)
-                color = (0, 255, 0) if name != "Nguoi la" else (0, 0, 255)
-                cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
-                label = f"ID:{obj_id} {name} ({dist:.2f})"
-                cv2.putText(frame, label, (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
+            if person_detection_is_on:
+                for obj_id, data in self.tracked_objects.items():
+                    x1, y1, x2, y2 = data['bbox']
+                    name = data['name']
+                    dist = data.get('distance', 0.0)
+                    color = (0, 255, 0) if name != "Nguoi la" else (0, 0, 255)
+                    cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
+                    label = f"ID:{obj_id} {name} ({dist:.2f})"
+                    cv2.putText(frame, label, (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.5, color, 1)
 
             if self.show_window:
                 display_frame = cv2.resize(frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)
@@ -354,4 +400,4 @@ class Camera:
 def get_known_data():
     return known_embeddings, known_names
 
-__all__ = ['Camera', 'app', 'match_face', 'update_known_data']
+__all__ = ['Camera', 'app', 'match_face', 'update_known_data', 'update_yolo_model'] # <--- THÊM 'update_yolo_model'

@@ -1,6 +1,6 @@
 # telegram_bot.py
 import threading
-import queue
+# import queue # <--- XÓA DÒNG NÀY
 import httpx
 import os
 import asyncio
@@ -17,11 +17,12 @@ from telegram.ext import (
 )
  
 from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, HTTPX_TIMEOUT, OPENAI_API_KEY, AI_ENABLED
-from state_manager import StateManager
+# from state_manager import StateManager # <--- XÓA DÒNG NÀY
+from shared_state import state, response_queue # <--- THAY ĐỔI DÒNG NÀY
  
 # --- state & queues (exported) ---
-state = StateManager()
-response_queue = queue.Queue()
+# state = StateManager() # <--- XÓA DÒNG NÀY
+# response_queue = queue.Queue() # <--- XÓA DÒNG NÀY
  
 # --- logging ---
 # Sửa đổi logging để đảm bảo nó hoạt động nhất quán
@@ -81,7 +82,21 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     alerts = state.list_alerts()
     if update.message:
         await update.message.reply_text(f"Alerts total: {len(alerts)}")
- 
+
+# <--- THÊM HÀM MỚI DƯỚI ĐÂY --->
+async def toggle_detection_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Bật/tắt tính năng nhận diện người."""
+    if not update.message:
+        return
+    
+    current_state = state.is_person_detection_enabled()
+    new_state = not current_state
+    state.set_person_detection_enabled(new_state)
+    
+    status_text = "🟢 BẬT" if new_state else "🔴 TẮT"
+    await update.message.reply_text(f"✅ Đã cập nhật: Nhận diện người hiện đang {status_text}.")
+# <--- KẾT THÚC PHẦN THÊM MỚI --->
+
 # --- message listener: handles alert replies OR AI chat (fallback) ---
 async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # <--- THAY ĐỔI: Thêm logging chẩn đoán ngay từ đầu --->
@@ -161,6 +176,7 @@ def run_bot():
  
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
+    app.add_handler(CommandHandler("detect", toggle_detection_cmd)) # <-- THÊM DÒNG NÀY
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_listener))
  
     logger.info("Telegram bot starting polling...")

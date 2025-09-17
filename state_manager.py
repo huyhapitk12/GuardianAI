@@ -7,6 +7,20 @@ class StateManager:
     def __init__(self):
         self.lock = threading.Lock()
         self.active = {}  # alert_id -> info
+        self.person_detection_enabled = True # <-- THÊM DÒNG NÀY
+
+    # <--- THÊM CÁC HÀM MỚI DƯỚI ĐÂY --->
+    def is_person_detection_enabled(self) -> bool:
+        """Kiểm tra xem tính năng nhận diện người có đang bật không."""
+        with self.lock:
+            return self.person_detection_enabled
+
+    def set_person_detection_enabled(self, enabled: bool):
+        """Bật hoặc tắt tính năng nhận diện người."""
+        with self.lock:
+            self.person_detection_enabled = enabled
+            print(f"[StateManager] Person detection set to: {enabled}")
+    # <--- KẾT THÚC PHẦN THÊM MỚI --->
 
     # <--- THAY ĐỔI MỚI: Thêm hàm kiểm tra cảnh báo đang chờ --->
     def has_unresolved_alert(self, key: Union[str, Tuple]) -> bool:

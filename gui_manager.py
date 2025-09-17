@@ -1,3 +1,4 @@
+# gui_manager.py
 import customtkinter as ctk
 from tkinter import filedialog, simpledialog, messagebox
 import os
@@ -7,8 +8,11 @@ import pickle
 from PIL import Image
 
 # --- Import thật từ dự án của bạn ---
-from detection_core import update_known_data, update_model, app
-from config import EMBEDDING_FILE, NAMES_FILE, DATA_DIR
+# <--- THAY ĐỔI DÒNG IMPORT NÀY --->
+from detection_core import update_known_data, update_model, app, update_yolo_model
+from config import EMBEDDING_FILE, NAMES_FILE, DATA_DIR, YOLO_SIZE
+from shared_state import state as sm
+
 # ------------------------------------
 
 # --- Cài đặt giao diện ---
@@ -45,10 +49,40 @@ class FaceManagerApp:
         general_actions_frame = ctk.CTkFrame(self.left_frame)
         general_actions_frame.grid(row=2, column=0, padx=10, pady=10, sticky="sew")
 
-        model_label = ctk.CTkLabel(general_actions_frame, text="Chọn Model")
+        # --- Nút gạt bật/tắt nhận diện ---
+        detection_frame = ctk.CTkFrame(general_actions_frame)
+        detection_frame.pack(pady=10, padx=10, fill="x")
+        
+        self.detection_switch_var = ctk.StringVar(value="on" if sm.is_person_detection_enabled() else "off")
+        self.detection_switch = ctk.CTkSwitch(
+            detection_frame, 
+            text="Nhận diện người",
+            command=self.toggle_person_detection,
+            variable=self.detection_switch_var,
+            onvalue="on",
+            offvalue="off"
+        )
+        self.detection_switch.pack(side="left", padx=10, pady=5)
+
+        # <--- THÊM KHỐI GIAO DIỆN MỚI DƯỚI ĐÂY --->
+        yolo_model_label = ctk.CTkLabel(general_actions_frame, text="Chọn Model YOLO (Lửa/Người)")
+        yolo_model_label.pack(pady=(10,0), padx=10, fill="x")
+
+        self.yolo_model_var = ctk.StringVar(value=YOLO_SIZE)
+        yolo_model_options = ["medium", "small"]
+        yolo_model_combo = ctk.CTkOptionMenu(
+            general_actions_frame,
+            variable=self.yolo_model_var,
+            values=yolo_model_options,
+            command=self.change_yolo_model
+        )
+        yolo_model_combo.pack(pady=5, padx=10, fill="x")
+        # <--- KẾT THÚC PHẦN THÊM MỚI --->
+
+        model_label = ctk.CTkLabel(general_actions_frame, text="Chọn Model Nhận diện mặt")
         model_label.pack(pady=(10,0), padx=10, fill="x")
 
-        self.model_var = ctk.StringVar(value="buffalo_l")  # default
+        self.model_var = ctk.StringVar(value="buffalo_l")
         model_options = ["buffalo_s", "buffalo_l"]
         model_combo = ctk.CTkOptionMenu(
             general_actions_frame,
@@ -77,16 +111,38 @@ class FaceManagerApp:
         self.populate_person_list()
         self.show_placeholder_content()
 
+        self.sync_detection_switch_state()
+
+    def sync_detection_switch_state(self):
+        is_enabled = sm.is_person_detection_enabled()
+        true_state_str = "on" if is_enabled else "off"
+        gui_state_str = self.detection_switch_var.get()
+        if true_state_str != gui_state_str:
+            self.detection_switch_var.set(true_state_str)
+        self.root.after(1000, self.sync_detection_switch_state)
+
+    def toggle_person_detection(self):
+        is_on = self.detection_switch_var.get() == "on"
+        sm.set_person_detection_enabled(is_on)
+
+    # <--- THÊM HÀM MỚI DƯỚI ĐÂY --->
+    def change_yolo_model(self, selected_size):
+        """Hàm được gọi khi người dùng chọn model YOLO mới từ dropdown."""
+        try:
+            update_yolo_model(selected_size)
+            messagebox.showinfo("Thành công", f"Đã chuyển sang model YOLO: '{selected_size}'.")
+        except Exception as e:
+            messagebox.showerror("Lỗi", f"Không thể chuyển đổi model YOLO: {e}")
+    # <--- KẾT THÚC PHẦN THÊM MỚI --->
+
     def change_model(self, selected):
         update_model(selected)
-        messagebox.showinfo("Model Changed", f"Đã chuyển sang model: {selected}")
+        messagebox.showinfo("Model Changed", f"Đã chuyển sang model nhận diện mặt: {selected}")
 
 
     def populate_person_list(self):
-        # Xóa danh sách cũ
         for widget in self.person_list_frame.winfo_children():
             widget.destroy()
-
         try:
             persons = sorted([d for d in os.listdir(DATA_DIR) if os.path.isdir(os.path.join(DATA_DIR, d))])
             for person_name in persons:
@@ -95,7 +151,7 @@ class FaceManagerApp:
                     text=person_name,
                     command=lambda name=person_name: self.select_person(name),
                     fg_color="transparent",
-                    anchor="w",  # SỬA LỖI: Dùng anchor="w" thay cho text_align="left"
+                    anchor="w",
                     hover_color=("gray85", "gray20")
                 )
                 btn.pack(fill="x", padx=5, pady=2)
@@ -104,11 +160,9 @@ class FaceManagerApp:
 
     def select_person(self, name):
         self.current_person = name
-        # Xóa nội dung cũ
         for widget in self.right_frame.winfo_children():
             widget.destroy()
 
-        # --- Header của content ---
         header_frame = ctk.CTkFrame(self.right_frame, fg_color="transparent")
         header_frame.grid(row=0, column=0, sticky="ew", pady=(0, 10))
         header_frame.grid_columnconfigure(0, weight=1)
@@ -116,7 +170,6 @@ class FaceManagerApp:
         person_name_label = ctk.CTkLabel(header_frame, text=name, font=ctk.CTkFont(size=28, weight="bold"))
         person_name_label.grid(row=0, column=0, sticky="w")
 
-        # Nút chức năng cho người được chọn
         person_actions_frame = ctk.CTkFrame(header_frame, fg_color="transparent")
         person_actions_frame.grid(row=0, column=1, sticky="e")
 
@@ -125,18 +178,15 @@ class FaceManagerApp:
         btn_del_person = ctk.CTkButton(person_actions_frame, text="Xóa Người Này", fg_color="#D32F2F", hover_color="#B71C1C", command=lambda: self.delete_person(name))
         btn_del_person.pack(side="left", padx=5)
 
-        # --- Khu vực hiển thị ảnh ---
         self.main_image_label = ctk.CTkLabel(self.right_frame, text="")
         self.main_image_label.grid(row=1, column=0, sticky="nsew", pady=10)
 
-        # --- Thanh cuộn ảnh thumbnail ---
         self.thumbnail_frame = ctk.CTkScrollableFrame(self.right_frame, label_text="Ảnh đã lưu", height=120, orientation="horizontal")
         self.thumbnail_frame.grid(row=2, column=0, sticky="ew", pady=10)
 
         self.load_person_images(name)
 
     def show_placeholder_content(self):
-        # Xóa nội dung cũ
         for widget in self.right_frame.winfo_children():
             widget.destroy()
         
@@ -149,7 +199,6 @@ class FaceManagerApp:
         person_dir = os.path.join(DATA_DIR, name)
         image_files = [f for f in os.listdir(person_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
 
-        # Xóa thumbnail cũ
         for widget in self.thumbnail_frame.winfo_children():
             widget.destroy()
 
@@ -157,11 +206,9 @@ class FaceManagerApp:
             self.main_image_label.configure(image=None, text="Không có ảnh nào cho người này.")
             return
 
-        # Hiển thị ảnh đầu tiên làm ảnh chính
         first_image_path = os.path.join(person_dir, image_files[0])
         self.update_main_image(first_image_path)
 
-        # Tạo thumbnails
         for img_file in image_files:
             img_path = os.path.join(person_dir, img_file)
             try:
@@ -189,9 +236,6 @@ class FaceManagerApp:
         except Exception as e:
             print(f"Không thể hiển thị ảnh chính {image_path}: {e}")
             self.main_image_label.configure(image=None, text="Lỗi khi tải ảnh.")
-
-    # --- CÁC HÀM CHỨC NĂNG (LOGIC) ---
-    # (Các hàm logic từ add_person đến process_and_save_embeddings giữ nguyên như cũ)
 
     def add_person(self):
         name = simpledialog.askstring("Thêm Người Mới", "Nhập tên người cần thêm:", parent=self.root)
@@ -230,7 +274,7 @@ class FaceManagerApp:
         shutil.copy(img_path, person_dir)
         
         self.process_and_save_embeddings(rebuild_mode=False)
-        self.load_person_images(name) # Chỉ cần load lại ảnh cho người hiện tại
+        self.load_person_images(name)
         messagebox.showinfo("Thành công", f"Đã thêm ảnh mới cho '{name}'.")
 
     def delete_person(self, name):
@@ -239,7 +283,7 @@ class FaceManagerApp:
         
         try:
             shutil.rmtree(os.path.join(DATA_DIR, name))
-            self.process_and_save_embeddings(rebuild_mode=True) # Xóa xong phải build lại
+            self.process_and_save_embeddings(rebuild_mode=True)
             self.populate_person_list()
             self.show_placeholder_content()
             messagebox.showinfo("Thành công", f"Đã xóa '{name}'.")

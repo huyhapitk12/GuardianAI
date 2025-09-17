@@ -16,9 +16,17 @@ NAMES_FILE = os.path.join(BASE_DIR, "Data", "known_names.pkl")
 MODEL_NAME = "buffalo_l"
 RECOGNITION_THRESHOLD = 0.4
 
-# YOLO path (your model folder)
-YOLO_MODEL_PATH = os.path.join(MODEL_DIR, "model_openvino_model")
-YOLO_PERSON_MODEL_PATH = "Data/Model/yolo12s_openvino_model"  # optional separate person detector
+# <--- THAY ĐỔI BẮT ĐẦU TỪ ĐÂY --->
+# YOLO settings
+YOLO_SIZE = "medium"  # Tùy chọn: "medium", "small". Đây là giá trị mặc định khi khởi động.
+
+# Tự động xây dựng đường dẫn dựa trên YOLO_SIZE
+# Đường dẫn này sẽ được dùng để tải model lửa/khói
+YOLO_MODEL_PATH = os.path.join(MODEL_DIR, YOLO_SIZE.capitalize(), "Fire", f"{YOLO_SIZE}_openvino_model")
+# Đường dẫn này sẽ được dùng để tải model người (nếu có)
+YOLO_PERSON_MODEL_PATH = os.path.join(MODEL_DIR, YOLO_SIZE.capitalize(), "Person", f"{YOLO_SIZE}_openvino_model")
+# <--- KẾT THÚC THAY ĐỔI --->
+
 
 # Recording
 RECORD_SECONDS = 10   # 100s per your last request
@@ -51,3 +59,4 @@ LOG_CSV = os.path.join(BASE_DIR, "events_log.csv")
 
 # IP camera
 IP_CAMERA_URL = 0# "rtsp://admin:XGZBPX@192.168.1.6:554/h264/ch1/sub_stream"
+# rtsp://admin:XGZBPX@192.168.0.104:554/h264/ch1/sub_stream

@@ -10,19 +10,21 @@ import customtkinter as ctk
 
 from detection_core import Camera
 import detection_core
-from telegram_bot import run_bot, response_queue, state
-from video_recorder import Recorder, send_photo, send_video_or_document
+from telegram_bot import run_bot
+# from video_recorder import Recorder, send_photo, send_video_or_document # <--- XÓA DÒNG NÀY
+from video_recorder import send_photo, send_video_or_document # <--- THAY BẰNG DÒNG NÀY
 from gui_manager import FaceManagerApp
 from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, IP_CAMERA_URL, DEBOUNCE_SECONDS
-from spam_guard import SpamGuard
+# from spam_guard import SpamGuard # <--- XÓA DÒNG NÀY
+from shared_state import state, response_queue, recorder, guard # <--- THÊM DÒNG NÀY
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 log = logging.getLogger("guardian")
 
-recorder = Recorder()
-sm = state
-response_q = response_queue
-guard = SpamGuard(debounce_seconds=DEBOUNCE_SECONDS, min_interval=10, max_per_minute=4)
+# recorder = Recorder() # <--- XÓA DÒNG NÀY
+sm = state # <--- THAY ĐỔI DÒNG NÀY
+response_q = response_queue # <--- THAY ĐỔI DÒNG NÀY
+# guard = SpamGuard(debounce_seconds=DEBOUNCE_SECONDS, min_interval=10, max_per_minute=4) # <--- XÓA DÒNG NÀY
 
 USER_RESPONSE_WINDOW = 60
 
@@ -43,7 +45,7 @@ def _on_alert(frame, reason, name, meta):
         log.info("Bỏ qua cảnh báo %s để tránh spam (debounce)", alert_key)
         return
 
-    log.info(">>> CẢNH BÁO MỚI ĐƯỢC PHÉP: %s", alert_key)
+    log.info(">>> CẢNH BÁO MỚI ĐƯỢỢC PHÉP: %s", alert_key)
 
     chat_id = TELEGRAM_CHAT_ID
     img_path = os.path.join(TMP_DIR, f"alert_{reason}_{uuid.uuid4().hex}.jpg")
