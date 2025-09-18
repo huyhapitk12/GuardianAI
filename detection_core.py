@@ -9,7 +9,7 @@ import cv2
 from collections import defaultdict
 
 from ultralytics import YOLO
-from insightface.app import FaceAnalysis
+from Lib.insightface.app import FaceAnalysis
 from scipy.spatial.distance import cosine
 
 from config import (
@@ -111,8 +111,8 @@ def update_yolo_model(size: str):
         print(f"[detection_core] Lỗi: Kích thước model không hợp lệ: {size}. Phải là 'small' hoặc 'medium'.")
         return
 
-    fire_path = os.path.join(MODEL_DIR, size.capitalize(), "Fire", f"{size}_openvino_model")
-    person_path = os.path.join(MODEL_DIR, size.capitalize(), "Person", f"{size}_openvino_model")
+    fire_path = os.path.join(MODEL_DIR, size.capitalize(), "Fire", f"{size}")
+    person_path = os.path.join(MODEL_DIR, size.capitalize(), "Person", f"{size}")
 
     try:
         print(f"Đang tải model Lửa/Khói mới từ: {fire_path}")
