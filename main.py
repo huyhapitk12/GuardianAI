@@ -19,6 +19,7 @@ from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, IP
 from shared_state import state, response_queue, recorder, guard # <--- THÊM DÒNG NÀY
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+logging.getLogger("ultralytics").setLevel(logging.ERROR)
 log = logging.getLogger("guardian")
 
 # recorder = Recorder() # <--- XÓA DÒNG NÀY

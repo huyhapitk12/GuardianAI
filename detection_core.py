@@ -59,8 +59,27 @@ if os.path.exists(EMBEDDING_FILE) and os.path.exists(NAMES_FILE):
         print("[detection_core] Failed to load known data:", e)
         known_embeddings, known_names = [], []
 else:
-    print("Không tìm thấy file dữ liệu, khởi tạo danh sách rỗng.")
     known_embeddings, known_names = [], []
+    for person_name in os.listdir(DATA_DIR):
+        person_path = os.path.join(DATA_DIR, person_name)
+        if not os.path.isdir(person_path):
+            continue
+        for filename in os.listdir(person_path):
+            if not (filename.endswith(".jpg") or filename.endswith(".png")):
+                continue
+            filepath = os.path.join(person_path, filename)
+            img = cv2.imread(filepath)
+            if img is None:
+                print(f"Lỗi: không thể đọc ảnh {filepath}")
+                continue
+            faces = app.get(img)
+            if faces:
+                embedding = faces[0].embedding
+                known_embeddings.append(embedding)
+                known_names.append(person_name)
+                print(f"Đã mã hóa: {person_name}/{filename}")
+            else:
+                print(f"Cảnh báo: Không tìm thấy khuôn mặt nào trong ảnh {filepath}")
 
 
 # --- Utility functions ---
@@ -163,6 +182,7 @@ class Camera:
         self.fire_queue = queue.Queue(maxsize=2)
         self.result_queue = queue.Queue(maxsize=16)
         self.fire_detection_timestamps = []
+        self.current_fire_boxes = []
 
         self.tracked_objects = {}
         self.next_object_id = 0
@@ -255,7 +275,8 @@ class Camera:
             if not ret:
                 time.sleep(0.01)
                 continue
-
+            
+            self.current_fire_boxes.clear()
             self._update_last_frame(frame)
             orig_h, orig_w = frame.shape[:2]
             self._frame_idx += 1
@@ -367,8 +388,59 @@ class Camera:
                                 }
 
                     elif typ == "fire":
-                        # ... (giữ nguyên) ...
-                        pass
+                        now = time.time()
+                        
+                        # Thêm timestamp của các bounding box lửa vừa phát hiện được
+                        # results là một list các tuple (x1, y1, x2, y2, "lua_chay")
+                        for _ in results:
+                            self.fire_detection_timestamps.append(now)
+
+                        # Dọn dẹp các timestamp cũ (ngoài cửa sổ thời gian FIRE_WINDOW_SECONDS)
+                        self.fire_detection_timestamps = [
+                            t for t in self.fire_detection_timestamps 
+                            if now - t < FIRE_WINDOW_SECONDS
+                        ]
+
+                        # Kiểm tra xem có đủ số lần phát hiện trong cửa sổ thời gian không
+                        if len(self.fire_detection_timestamps) >= FIRE_REQUIRED:
+                            # Nếu đủ, gọi hàm callback để tạo cảnh báo
+                            if on_alert_callback:
+                                # Lấy bounding box đầu tiên để vẽ lên ảnh cảnh báo
+                                # results[0] là (x1, y1, x2, y2, "lua_chay")
+                                first_box = results[0][:4] 
+                                frame_with_box = frame.copy()
+                                
+                                # Scale lại bounding box từ kích thước xử lý (PROC_SIZE) về kích thước gốc của frame
+                                scale_x = orig_w / float(self.PROC_W)
+                                scale_y = orig_h / float(self.PROC_H)
+
+                                # Lưu tất cả các hộp lửa được phát hiện vào danh sách để vẽ
+                                for box in results:
+                                    x1, y1, x2, y2 = box[:4]
+                                    x1_orig, y1_orig = int(x1 * scale_x), int(y1 * scale_y)
+                                    x2_orig, y2_orig = int(x2 * scale_x), int(y2 * scale_y)
+                                    self.current_fire_boxes.append((x1_orig, y1_orig, x2_orig, y2_orig))
+                                
+                                # Logic gửi cảnh báo vẫn giữ nguyên như cũ
+                                now = time.time()
+                                for _ in results:
+                                    self.fire_detection_timestamps.append(now)
+
+                                self.fire_detection_timestamps = [
+                                    t for t in self.fire_detection_timestamps 
+                                    if now - t < FIRE_WINDOW_SECONDS
+                                ]
+
+                                if len(self.fire_detection_timestamps) >= FIRE_REQUIRED:
+                                    if on_alert_callback:
+                                        first_box_orig = self.current_fire_boxes[0]
+                                        frame_with_box = frame.copy()
+                                        cv2.rectangle(frame_with_box, (first_box_orig[0], first_box_orig[1]), (first_box_orig[2], first_box_orig[3]), (0, 0, 255), 2)
+                                        cv2.putText(frame_with_box, "FIRE DETECTED", (first_box_orig[0], first_box_orig[1] - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (0, 0, 255), 2)
+                                        
+                                        on_alert_callback(frame_with_box, "lua_chay", None, {})
+                                        self.fire_detection_timestamps.clear()
+
             except queue.Empty:
                 pass
 
