@@ -22,9 +22,9 @@ YOLO_SIZE = "medium"  # Tùy chọn: "medium", "small". Đây là giá trị m�
 
 # Tự động xây dựng đường dẫn dựa trên YOLO_SIZE
 # Đường dẫn này sẽ được dùng để tải model lửa/khói
-YOLO_MODEL_PATH = os.path.join(MODEL_DIR, YOLO_SIZE.capitalize(), "Fire", f"{YOLO_SIZE}")
+YOLO_MODEL_PATH = os.path.join(MODEL_DIR, YOLO_SIZE.capitalize(), "Fire", f"{YOLO_SIZE}_openvino_model")
 # Đường dẫn này sẽ được dùng để tải model người (nếu có)
-YOLO_PERSON_MODEL_PATH = os.path.join(MODEL_DIR, YOLO_SIZE.capitalize(), "Person", f"{YOLO_SIZE}")
+YOLO_PERSON_MODEL_PATH = os.path.join(MODEL_DIR, YOLO_SIZE.capitalize(), "Person", f"{YOLO_SIZE}_openvino_model")
 # <--- KẾT THÚC THAY ĐỔI --->
 
 

@@ -11,21 +11,17 @@ import customtkinter as ctk
 from detection_core import Camera
 import detection_core
 from telegram_bot import run_bot
-# from video_recorder import Recorder, send_photo, send_video_or_document # <--- XÓA DÒNG NÀY
-from video_recorder import send_photo, send_video_or_document # <--- THAY BẰNG DÒNG NÀY
+from video_recorder import send_photo, send_video_or_document
 from gui_manager import FaceManagerApp
 from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, IP_CAMERA_URL, DEBOUNCE_SECONDS
-# from spam_guard import SpamGuard # <--- XÓA DÒNG NÀY
-from shared_state import state, response_queue, recorder, guard # <--- THÊM DÒNG NÀY
+from shared_state import state, response_queue, recorder, guard
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
 log = logging.getLogger("guardian")
 
-# recorder = Recorder() # <--- XÓA DÒNG NÀY
-sm = state # <--- THAY ĐỔI DÒNG NÀY
-response_q = response_queue # <--- THAY ĐỔI DÒNG NÀY
-# guard = SpamGuard(debounce_seconds=DEBOUNCE_SECONDS, min_interval=10, max_per_minute=4) # <--- XÓA DÒNG NÀY
+sm = state
+response_q = response_queue
 
 USER_RESPONSE_WINDOW = 60
 
@@ -35,13 +31,10 @@ def _on_alert(frame, reason, name, meta):
     else:
         alert_key = reason
 
-    # <--- THAY ĐỔI MỚI: Lớp kiểm tra đầu tiên và quan trọng nhất --->
-    # Nếu đã có một cảnh báo cho người/sự kiện này đang chờ phản hồi, hãy bỏ qua hoàn toàn.
     if sm.has_unresolved_alert(alert_key):
         log.info("Bỏ qua cảnh báo %s vì đã có một cảnh báo khác đang chờ phản hồi.", alert_key)
         return
 
-    # Lớp kiểm tra thứ hai: SpamGuard để chống các phát hiện dồn dập
     if not guard.allow(alert_key):
         log.info("Bỏ qua cảnh báo %s để tránh spam (debounce)", alert_key)
         return
@@ -161,12 +154,7 @@ def _on_alert(frame, reason, name, meta):
 
     threading.Thread(target=watcher, args=(alert_id,), daemon=True).start()
 
-# (Phần còn lại của file main.py giữ nguyên, không cần thay đổi)
-# ...
-# (Các hàm start_clip_for_alert, recorder_monitor_loop, run_gui, và __main__ giữ nguyên)
-# ...
 detection_core.on_alert_callback = _on_alert
-
 
 def start_clip_for_alert(cam, initial_frame, alert_id, duration=8, fps=20.0, reason="clip"):
     def worker():
@@ -193,11 +181,11 @@ def start_clip_for_alert(cam, initial_frame, alert_id, duration=8, fps=20.0, rea
             log.exception("Clip worker: write initial_frame failed: %s", e)
         while time.time() - t0 < float(duration):
             try:
-                if hasattr(cam, "read"):
-                    ret, frame = cam.read()
+                if hasattr(cam, "read_raw"):
+                    ret, frame = cam.read_raw()
                 else:
-                    frame = getattr(cam, "_last_frame", None)
-                    ret = frame is not None
+                    ret, frame = cam.read()
+
                 if not ret or frame is None:
                     time.sleep(0.02)
                     continue
@@ -228,20 +216,26 @@ def recorder_monitor_loop(cam):
         if getattr(cam, "quit", False):
             log.info("recorder_monitor_loop quitting due to cam.quit")
             break
+        
         ret, frame = False, None
         try:
-            if hasattr(cam, "read"):
+            if hasattr(cam, "read_raw"):
+                ret, frame = cam.read_raw()
+            else:
                 ret, frame = cam.read()
-            if (not ret) and hasattr(cam, "_last_frame"):
-                f = getattr(cam, "_last_frame", None)
+
+            if (not ret) and hasattr(cam, "_raw_frame"):
+                f = getattr(cam, "_raw_frame", None)
                 if f is not None:
-                    ret, frame = True, f
+                    ret, frame = True, f.copy()
         except Exception as e:
-            log.exception("Exception while reading frame: %s", e)
+            log.exception("Exception while reading frame for recorder: %s", e)
             ret, frame = False, None
-        if not ret:
+        
+        if not ret or frame is None:
             time.sleep(0.05)
             continue
+        
         try:
             if recorder.current:
                 recorder.write(frame)
@@ -254,29 +248,33 @@ def recorder_monitor_loop(cam):
             log.exception("Error during recorder write/finalize: %s", e)
         time.sleep(0.02)
 
-def run_gui():
+def run_gui(cam_instance):
     root = ctk.CTk()
-    app = FaceManagerApp(root)
+    app = FaceManagerApp(root, cam_instance)
     root.mainloop()
 
 if __name__ == "__main__":
     tbot = threading.Thread(target=run_bot, daemon=True)
     tbot.start()
     log.info("Telegram bot thread started.")
+
     try:
-        gui_thread = threading.Thread(target=run_gui, daemon=True)
-        gui_thread.start()
-        log.info("GUI thread started.")
-    except Exception as e:
-        log.exception("Failed to start GUI thread: %s", e)
-    try:
-        cam = Camera(IP_CAMERA_URL)
+        cam = Camera(IP_CAMERA_URL, show_window=False) 
         globals()["cam"] = cam
     except Exception as e:
         log.exception("Failed to create Camera: %s", e)
         raise
+
+    try:
+        gui_thread = threading.Thread(target=run_gui, args=(cam,), daemon=True)
+        gui_thread.start()
+        log.info("GUI thread started.")
+    except Exception as e:
+        log.exception("Failed to start GUI thread: %s", e)
+
     threading.Thread(target=recorder_monitor_loop, args=(cam,), daemon=True).start()
     log.info("Recorder monitor thread started.")
+
     try:
         cam.detect()
     except KeyboardInterrupt:
