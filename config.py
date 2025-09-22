@@ -36,7 +36,7 @@ os.makedirs(TMP_DIR, exist_ok=True)
 # Fire detection
 FIRE_WINDOW_SECONDS = 30
 FIRE_REQUIRED = 20
-FIRE_CONFIDENCE_THRESHOLD = 0.65  # ngưỡng confidence cho phát hiện lửa/khói
+FIRE_CONFIDENCE_THRESHOLD = 0.1  # ngưỡng confidence cho phát hiện lửa/khói
 
 # Processing
 FRAMES_REQUIRED = 7            # số frame liên tiếp để xác nhận một face
@@ -58,5 +58,7 @@ if OPENAI_API_KEY:
 LOG_CSV = os.path.join(BASE_DIR, "events_log.csv")
 
 # IP camera
-IP_CAMERA_URL = 0# "rtsp://admin:XGZBPX@192.168.1.6:554/h264/ch1/sub_stream"
+IP_CAMERA_URL = "rtsp://admin:XGZBPX@192.168.0.103:554/h264/ch1/sub_stream"
 # rtsp://admin:XGZBPX@192.168.0.104:554/h264/ch1/sub_stream
+
+TARGET_FPS = 5
