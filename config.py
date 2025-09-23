@@ -61,4 +61,4 @@ LOG_CSV = os.path.join(BASE_DIR, "events_log.csv")
 IP_CAMERA_URL = "rtsp://admin:XGZBPX@192.168.0.103:554/h264/ch1/sub_stream"
 # rtsp://admin:XGZBPX@192.168.0.104:554/h264/ch1/sub_stream
 
-TARGET_FPS = 5
+TARGET_FPS = 20
