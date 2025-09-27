@@ -9,6 +9,8 @@ import numpy as np
 from scipy.spatial.distance import cosine
 from ultralytics import YOLO
 from Lib.insightface.app import FaceAnalysis
+from trackers import SORTTracker
+import supervision as sv
 
 from config import (
     EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH,
@@ -27,7 +29,6 @@ def _colorfulness_score(img):
     """Đo độ 'màu sắc' của ảnh để tự động phát hiện định dạng video."""
     if img is None or img.ndim < 3 or img.shape[2] != 3:
         return 0.0
-    # Tổng độ lệch chuẩn của các kênh màu
     return float(img[..., 0].std() + img[..., 1].std() + img[..., 2].std())
 
 def _apply_conversion(frame, mode):
@@ -61,6 +62,7 @@ except Exception as e:
     print(f"[detection_core] CẢNH BÁO: Không thể tải model YOLO Người: {e}")
     model_person = None
 
+# InsightFace app
 app = FaceAnalysis(name=MODEL_NAME, root="Data/Model", allowed_modules=['detection', 'recognition'])
 app.prepare(ctx_id=-1, det_size=(640, 640))
 print("[detection_core] InsightFace đã sẵn sàng.")
@@ -111,7 +113,6 @@ def update_yolo_model(size: str):
         print(f"[detection_core] Lỗi: Kích thước model không hợp lệ: {size}.")
         return
 
-    ### THAY ĐỔI 1: Sửa lại cách xây dựng đường dẫn cho đúng với định dạng `_openvino_model` ###
     fire_path = os.path.join(MODEL_DIR, size.capitalize(), "Fire", f"{size}_openvino_model")
     person_path = os.path.join(MODEL_DIR, size.capitalize(), "Person", f"{size}_openvino_model")
 
@@ -141,76 +142,205 @@ def calculate_iou(boxA, boxB):
 
 def create_tracker_prefer_csrt():
     try:
-        # Ưu tiên tracker CSRT mới nhất nếu có
         if hasattr(cv2, "TrackerCSRT_create"): return cv2.TrackerCSRT_create()
-        # Fallback cho các phiên bản OpenCV cũ hơn
         if hasattr(cv2, "legacy") and hasattr(cv2.legacy, "TrackerCSRT_create"): return cv2.legacy.TrackerCSRT_create()
     except Exception: pass
     return None
 
+# safe IoU and robust parse_tracked used by SORT adapter
+def safe_iou(boxA, boxB):
+    try:
+        xA = max(boxA[0], boxB[0])
+        yA = max(boxA[1], boxB[1])
+        xB = min(boxA[2], boxB[2])
+        yB = min(boxA[3], boxB[3])
+        interW = max(0.0, xB - xA)
+        interH = max(0.0, yB - yA)
+        interArea = interW * interH
+        boxAArea = max(0.0, (boxA[2] - boxA[0])) * max(0.0, (boxA[3] - boxA[1]))
+        boxBArea = max(0.0, (boxB[2] - boxB[0])) * max(0.0, (boxB[3] - boxB[1]))
+        union = boxAArea + boxBArea - interArea
+        if union <= 0.0:
+            return 0.0
+        return interArea / union
+    except Exception:
+        return 0.0
+
+def parse_tracked(tracked):
+    """
+    Trả về (xyxy_array, id_list) hoặc (None, None) nếu không parse được.
+    Hỗ trợ một số định dạng phổ biến (supervision.Detections, np.ndarray, list).
+    """
+    try:
+        # supervision.Detections-like
+        if hasattr(tracked, "xyxy"):
+            xyxy = np.asarray(getattr(tracked, "xyxy"))
+            ids = None
+            for n in ("tracker_id","ids","track_id","id"):
+                if hasattr(tracked, n):
+                    try:
+                        ids = list(getattr(tracked, n))
+                        break
+                    except Exception:
+                        ids = None
+            if ids is None and xyxy.ndim == 2 and xyxy.shape[1] >= 5:
+                lastcol = xyxy[:, -1]
+                if np.all(np.isfinite(lastcol)) and np.allclose(lastcol, np.round(lastcol)):
+                    ids = lastcol.astype(int).tolist()
+                    xyxy = xyxy[:, :4]
+            if ids is None:
+                ids = [None]*len(xyxy)
+            if len(ids) != len(xyxy):
+                ids = (list(ids) + [None]*len(xyxy))[:len(xyxy)]
+            return np.asarray(xyxy, dtype=float), ids
+
+        # numpy array Nx4/5/6: if last col int -> ids
+        if isinstance(tracked, np.ndarray):
+            if tracked.ndim == 2 and tracked.shape[1] >= 4:
+                if tracked.shape[1] == 4:
+                    return tracked.astype(float), [None]*tracked.shape[0]
+                last = tracked[:, -1]
+                if np.all(np.isfinite(last)) and np.allclose(last, np.round(last)):
+                    return tracked[:, :4].astype(float), last.astype(int).tolist()
+                else:
+                    return tracked[:, :4].astype(float), [None]*tracked.shape[0]
+
+        # list-like: tuples (x1,y1,x2,y2,id) or objects with bbox attrs
+        if isinstance(tracked, (list, tuple)):
+            if len(tracked) == 0:
+                return np.zeros((0,4)), []
+            first = tracked[0]
+            # tuple-like
+            if isinstance(first, (list, tuple)) and len(first) >= 4:
+                xy = []
+                ids = []
+                for item in tracked:
+                    if len(item) >= 4 and all(isinstance(v, (int,float,np.integer,np.floating)) for v in item[:4]):
+                        xy.append(tuple(item[:4]))
+                        ids.append(item[4] if len(item) >= 5 else None)
+                    elif len(item) == 2 and isinstance(item[0], (list,tuple,np.ndarray)):
+                        bbox = item[0]
+                        xy.append(tuple(bbox[:4])); ids.append(item[1])
+                if len(xy) == 0:
+                    return None, None
+                return np.asarray(xy, dtype=float), ids
+
+            # object-like: try to extract tlbr/tlwh and id
+            if hasattr(first, "to_tlbr") or hasattr(first, "tlbr") or hasattr(first, "tlwh"):
+                xy = []; ids = []
+                for obj in tracked:
+                    try:
+                        if hasattr(obj, "to_tlbr"):
+                            tb = obj.to_tlbr()
+                        elif hasattr(obj, "tlbr"):
+                            tb = obj.tlbr if not callable(obj.tlbr) else obj.tlbr()
+                        elif hasattr(obj, "tlwh"):
+                            t = obj.tlwh if not callable(obj.tlwh) else obj.tlwh()
+                            tb = (t[0], t[1], t[0]+t[2], t[1]+t[3])
+                        else:
+                            tb = (0,0,0,0)
+                        tid = None
+                        for n in ("track_id","id","tracker_id"):
+                            if hasattr(obj, n):
+                                try:
+                                    tid = getattr(obj, n)
+                                    break
+                                except Exception:
+                                    tid = None
+                        xy.append(tb); ids.append(tid)
+                    except Exception:
+                        xy.append((0,0,0,0)); ids.append(None)
+                return np.asarray(xy, dtype=float), ids
+
+        # dict-like
+        if isinstance(tracked, dict):
+            for key in ("tracks","detections","results"):
+                if key in tracked:
+                    return parse_tracked(tracked[key])
+
+    except Exception as e:
+        print(f"[parse_tracked] error: {e}")
+        return None, None
+
+    return None, None
+
+def _extract_face_from_person_box(frame, person_box, expand_ratio=0.4):
+    """
+    person_box: (x1,y1,x2,y2) trên frame gốc
+    Trả về crop image khu vực đầu/face ước lượng
+    """
+    h, w = frame.shape[:2]
+    x1,y1,x2,y2 = person_box
+    ph = y2 - y1
+    expand_h = int(ph * expand_ratio)
+    cy1 = max(0, y1 - expand_h)
+    cy2 = min(h, int(y1 + ph * 0.45))
+    cx1 = max(0, int(x1 - expand_h))
+    cx2 = min(w, int(x2 + expand_h))
+    if cx2 <= cx1 or cy2 <= cy1:
+        return None
+    return frame[cy1:cy2, cx1:cx2].copy()
+
 # --- Lớp Camera chính ---
 class Camera:
     def __init__(self, src=0, show_window=False):
+        # mở camera và cấu hình
         self.cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
-        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # chỉ giữ frame mới nhất, bỏ backlog
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self.cap.isOpened():
             raise RuntimeError(f"Không thể mở camera/nguồn: {src}")
         self.quit = False
         self.show_window = show_window
 
-        # Queues để xử lý bất đồng bộ
-        self.face_queue = queue.Queue(maxsize=2)
+        # queues
         self.fire_queue = queue.Queue(maxsize=2)
         self.result_queue = queue.Queue(maxsize=16)
 
-        # State cho việc nhận diện
+        # state
         self.fire_detection_timestamps = []
         self.current_fire_boxes = []
         self.tracked_objects = {}
         self.next_object_id = 0
         self.person_detection_was_on = True
 
-        # Cấu hình
+        # config
         self.IOU_THRESHOLD = 0.3
         self.TRACKER_TIMEOUT_SECONDS = 2.0
         self.PROC_W, self.PROC_H = PROCESS_SIZE
+        # face recognition params
+        self.FACE_RECOG_COOLDOWN = 1.0
+        self.FACE_CONFIRM_HITS = FRAMES_REQUIRED
 
-        # Worker threads
-        threading.Thread(target=self.face_worker, daemon=True).start()
+        # SORT tracker
+        try:
+            self.sort = SORTTracker()
+            self.use_sort = True
+            print("[Camera] SORT tracker khởi tạo thành công.")
+        except Exception as e:
+            self.sort = None
+            self.use_sort = False
+            print(f"[Camera] Không thể khởi tạo SORT: {e}. Fallback sang CSRT/IOU.")
+
+        # worker threads
         threading.Thread(target=self.fire_worker, daemon=True).start()
+        # Note: face worker kept for compatibility but not used in person->face pipeline
+        threading.Thread(target=self.face_worker, daemon=True).start()
 
-        # State cho frame
+        # frame state
         self._frame_lock = threading.Lock()
         self._last_frame = None
         self._raw_frame = None
         self._frame_idx = 0
-        self._conversion_mode = None # Sẽ được tự động phát hiện
+        self._conversion_mode = None
 
     def face_worker(self):
-        """Thread xử lý nhận diện khuôn mặt."""
+        """(Còn giữ để tương thích) worker xử lý face queue — ít dùng khi pipeline person->face."""
         while not self.quit:
             try:
-                frame = self.face_queue.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            
-            if not sm.is_person_detection_enabled():
+                frame = None
+                time.sleep(1.0)
+            except Exception:
                 time.sleep(0.1)
-                continue
-
-            try:
-                faces = app.get(frame)
-                face_results = []
-                for face in faces:
-                    x1, y1, x2, y2 = face.bbox.astype(int)
-                    best_name, best_d = match_face(face.embedding)
-                    if best_name is None or best_d > RECOGNITION_THRESHOLD:
-                        best_name = "Nguoi la"
-                    face_results.append({"bbox": (x1, y1, x2, y2), "name": best_name, "distance": best_d})
-                if face_results:
-                    self.result_queue.put(("face", face_results))
-            except Exception as e:
-                print(f"[Face Worker Error] {e}")
 
     def fire_worker(self):
         """Thread xử lý nhận diện cháy."""
@@ -220,12 +350,10 @@ class Camera:
             except queue.Empty:
                 continue
 
-            ### THAY ĐỔI 2: Thêm lớp bảo vệ để worker không bị crash ###
-            # Kiểm tra model mỗi lần lặp để đảm bảo nó không bị `None` do lỗi tải lại
             if model is None:
-                time.sleep(1.0) # Chờ một chút trước khi thử lại
+                time.sleep(1.0)
                 continue
-            
+
             try:
                 results = model(frame, verbose=False)
                 fire_results = []
@@ -256,7 +384,7 @@ class Camera:
 
     def _auto_detect_format(self, frame):
         """Tự động phát hiện và chọn định dạng màu tốt nhất cho camera."""
-        if self._frame_idx < 30: # Chỉ kiểm tra trong 30 frame đầu
+        if self._frame_idx < 30:
             modes = ['NONE', 'BAYER_BG', 'BAYER_RG', 'BAYER_GB', 'BAYER_GR', 'YUY2', 'NV12', 'I420']
             candidates = []
             for mode in modes:
@@ -266,56 +394,141 @@ class Camera:
                     if score > 0: candidates.append((mode, score))
                 except Exception:
                     pass
-            
             if candidates:
                 best_mode, best_score = max(candidates, key=lambda x: x[1])
-                if best_score > 10: # Ngưỡng để tránh chọn sai
+                if best_score > 10:
                     self._conversion_mode = best_mode
                     print(f"[Camera Format] Tự động chọn định dạng: {best_mode} (score={best_score:.2f})")
-        
         return _apply_conversion(frame, self._conversion_mode) if self._conversion_mode else frame
 
-    def _process_face_results(self, results, scale_x, scale_y, now, frame):
-        # Chuyển đổi tọa độ về kích thước frame gốc
-        for res in results:
-            x1, y1, x2, y2 = res['bbox']
-            res['bbox'] = (int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y))
+    def _process_person_results(self, person_results, scale_x, scale_y, now, frame):
+        """
+        Xử lý person detection -> gọi SORT -> crop face -> face recognition -> cập nhật tracked_objects.
+        person_results: list of (x1,y1,x2,y2) relative to small_frame (PROC_W x PROC_H).
+        """
+        # convert coordinates to original frame size
+        converted = []
+        for box in person_results:
+            x1,y1,x2,y2 = box
+            converted.append((int(x1 * scale_x), int(y1 * scale_y), int(x2 * scale_x), int(y2 * scale_y)))
 
-        matched_obj_ids = set()
-        for res in results:
-            best_iou, best_obj_id = 0, None
-            for obj_id, data in self.tracked_objects.items():
-                if obj_id in matched_obj_ids: continue
-                iou = calculate_iou(res['bbox'], data['bbox'])
-                if iou > self.IOU_THRESHOLD and iou > best_iou:
-                    best_iou, best_obj_id = iou, obj_id
-            
-            if best_obj_id is not None: # Nếu khớp với tracker đã có
-                data = self.tracked_objects[best_obj_id]
-                data.update({'bbox': res['bbox'], 'last_seen_by_detector': now, 'hits': data['hits'] + 1})
-                if data['name'] == "Nguoi la": # Cập nhật tên nếu trước đó là 'Nguoi la'
-                    data.update({'name': res['name'], 'distance': res['distance']})
-                
-                if data['hits'] >= FRAMES_REQUIRED and not data['alert_sent']:
-                    reason = "nguoi_quen" if data['name'] != "Nguoi la" else "nguoi_la"
-                    name_param = data['name'] if reason == "nguoi_quen" else None
-                    if on_alert_callback:
-                        on_alert_callback(frame.copy(), reason, name_param, {"distance": data['distance']})
-                    data['alert_sent'] = True
-                matched_obj_ids.add(best_obj_id)
-            else: # Nếu là đối tượng mới
-                tracker = create_tracker_prefer_csrt()
-                if tracker is None: continue
-                x, y, w, h = res['bbox'][0], res['bbox'][1], res['bbox'][2]-res['bbox'][0], res['bbox'][3]-res['bbox'][1]
-                tracker.init(frame, (x, y, w, h))
-                
-                new_id = self.next_object_id
+        if len(converted) > 0:
+            xyxy_in = np.array(converted, dtype=float)
+            scores = np.ones((xyxy_in.shape[0],), dtype=float)
+            dets_array = np.hstack([xyxy_in, scores.reshape(-1,1)])
+        else:
+            xyxy_in = np.zeros((0, 4), dtype=float)
+            # THÊM DÒNG NÀY: Khởi tạo 'scores' là một mảng rỗng
+            scores = np.array([], dtype=float)
+            dets_array = np.zeros((0, 5), dtype=float)
+
+        # call SORT
+        tracked_xyxy, tracked_ids = None, None
+        if self.use_sort and self.sort is not None:
+            try:
+                try:
+                    tracked = self.sort.update(dets_array)
+                except Exception:
+                    dets = sv.Detections(xyxy=xyxy_in, confidence=scores, class_id=np.zeros(len(scores), dtype=int))
+                    tracked = self.sort.update(dets)
+                tracked_xyxy, tracked_ids = parse_tracked(tracked)
+            except Exception as e:
+                print("[Person->SORT] error:", e)
+                tracked_xyxy, tracked_ids = None, None
+
+        # Fallback simple IOU matching if SORT failed
+        if tracked_xyxy is None or tracked_ids is None:
+            # match each detected person to existing tracked_objects by IOU else create new
+            for box in converted:
+                best_iou=0; best_id=None
+                for tid, d in self.tracked_objects.items():
+                    iou = safe_iou(box, d['bbox'])
+                    if iou>best_iou:
+                        best_iou, best_id = iou, tid
+                if best_id is not None and best_iou >= self.IOU_THRESHOLD:
+                    d = self.tracked_objects[best_id]
+                    d['bbox']=box; d['last_seen_by_detector']=now; d['last_updated']=now
+                else:
+                    nid = self.next_object_id; self.next_object_id+=1
+                    self.tracked_objects[nid] = {'bbox': box, 'name': "Nguoi la", 'distance': float('inf'),
+                                                 'last_seen_by_detector': now, 'last_updated': now,
+                                                 'face_hits':0, 'last_face_rec':0.0, 'confirmed_name': None, 'alert_sent':False}
+            return
+
+        # SORT returned something -> use it
+        tracked_xyxy = np.asarray(tracked_xyxy, dtype=int)
+        for i, tid in enumerate(tracked_ids):
+            tb = tuple(map(int, tracked_xyxy[i]))
+            if tid is None:
+                tid = self.next_object_id
                 self.next_object_id += 1
-                self.tracked_objects[new_id] = {
-                    'tracker': tracker, 'bbox': res['bbox'], 'name': res['name'],
-                    'distance': res['distance'], 'last_updated': now,
-                    'last_seen_by_detector': now, 'hits': 1, 'alert_sent': False
-                }
+
+            # ensure entry
+            if tid not in self.tracked_objects:
+                self.tracked_objects[tid] = {'bbox': tb, 'name': "Nguoi la", 'distance': float('inf'),
+                                             'last_seen_by_detector': now, 'last_updated': now,
+                                             'face_hits':0, 'last_face_rec':0.0, 'confirmed_name': None, 'alert_sent':False}
+            else:
+                data = self.tracked_objects[tid]
+                data['bbox'] = tb
+                data['last_seen_by_detector'] = now
+                data['last_updated'] = now
+
+            # Face recognition decision
+            data = self.tracked_objects[tid]
+            cooldown = getattr(self, "FACE_RECOG_COOLDOWN", 1.0)
+            need_recog = (now - data.get('last_face_rec', 0.0) >= cooldown) and (data.get('confirmed_name') is None)
+
+            if need_recog:
+                data['last_face_rec'] = now
+                
+                # Cắt vùng ảnh của người từ frame gốc, thay vì đoán vị trí mặt
+                x1, y1, x2, y2 = tb
+                x1, y1 = max(0, x1), max(0, y1)
+                x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
+
+                if x2 > x1 and y2 > y1:
+                    person_crop = frame[y1:y2, x1:x2]                    
+                    try:
+                        # Chạy nhận diện khuôn mặt trực tiếp trên vùng ảnh của người
+                        faces = app.get(person_crop)
+                        
+                        if faces and len(faces) > 0:
+                            # Nếu có nhiều khuôn mặt, chọn cái lớn nhất
+                            best_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
+                            emb = best_face.embedding
+                            name, dist = match_face(emb)
+                            
+                            if name is not None and dist <= RECOGNITION_THRESHOLD:
+                                data['face_hits'] = data.get('face_hits', 0) + 1
+                                data['name'] = name
+                                data['distance'] = dist
+                            else:
+                                # Nhận diện sai hoặc là người lạ
+                                data['face_hits'] = max(0, data.get('face_hits', 0) - 1)
+                                if data['face_hits'] == 0:
+                                    data['name'] = "Nguoi la"
+                                    data['distance'] = float('inf')
+                        else:
+                            # Không tìm thấy khuôn mặt nào trong vùng ảnh của người
+                            data['face_hits'] = max(0, data.get('face_hits', 0) - 1)
+                            
+                    except Exception as e:
+                        print(f"[Face recog error on person_crop] {e}")
+                        data['face_hits'] = max(0, data.get('face_hits', 0) - 1)
+
+            # confirm stable name
+            confirm_hits = getattr(self, "FACE_CONFIRM_HITS", FRAMES_REQUIRED)
+            if data.get('face_hits',0) >= confirm_hits and data.get('confirmed_name') != data.get('name'):
+                data['confirmed_name'] = data['name']
+                if data['confirmed_name'] != "Nguoi la" and on_alert_callback and not data.get('alert_sent', False):
+                    on_alert_callback(frame.copy(), "nguoi_quen", data['confirmed_name'], {"distance": data['distance']})
+                    data['alert_sent'] = True
+
+        # prune
+        ids_to_remove = [oid for oid, d in list(self.tracked_objects.items()) if now - d.get('last_seen_by_detector', now) > self.TRACKER_TIMEOUT_SECONDS]
+        for oid in ids_to_remove:
+            self.tracked_objects.pop(oid, None)
 
     def _process_fire_results(self, results, scale_x, scale_y, now, frame):
         self.fire_detection_timestamps.extend([now] * len(results))
@@ -333,15 +546,12 @@ class Camera:
                     cv2.rectangle(frame_with_box, (x1_orig, y1_orig), (x2_orig, y2_orig), (0, 0, 255), 2)
                 
                 on_alert_callback(frame_with_box, "lua_chay", None, {})
-                # Lưu lại thời gian lần cuối phát hiện
                 self.last_fire_time = now  
 
-            # giữ timestamp trong cửa sổ
             self.fire_detection_timestamps = [
                 t for t in self.fire_detection_timestamps if now - t < FIRE_WINDOW_SECONDS
             ]
 
-        # 🔥 Nếu đã qua 5s từ lần phát hiện cuối cùng thì clear box
         if hasattr(self, "last_fire_time") and now - self.last_fire_time > 5:
             self.current_fire_boxes.clear()
 
@@ -368,58 +578,77 @@ class Camera:
             self._frame_idx += 1
             now = time.time()
             
-            # Tự động sửa định dạng màu nếu cần
             current_raw_frame = self._auto_detect_format(frame)
             display_frame = current_raw_frame.copy()
             orig_h, orig_w = current_raw_frame.shape[:2]
 
-            # Xử lý bật/tắt nhận diện người
             person_detection_is_on = sm.is_person_detection_enabled()
             if not person_detection_is_on and self.person_detection_was_on:
                 self.tracked_objects.clear()
                 print("[Detection] Nhận diện người đã tắt. Đã xóa các tracker.")
             self.person_detection_was_on = person_detection_is_on
 
-            # Cập nhật trackers
+            # prune stale tracks
             if person_detection_is_on:
                 ids_to_delete = []
-                for obj_id, data in self.tracked_objects.items():
-                    success, bbox = data['tracker'].update(current_raw_frame)
-                    if success:
-                        data['bbox'] = tuple(map(int, (bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3])))
-                        data['last_updated'] = now
-                    if not success or (now - data['last_seen_by_detector'] > self.TRACKER_TIMEOUT_SECONDS):
+                for obj_id, data in list(self.tracked_objects.items()):
+                    if now - data.get('last_seen_by_detector', now) > self.TRACKER_TIMEOUT_SECONDS:
                         ids_to_delete.append(obj_id)
                 for obj_id in ids_to_delete:
-                    if obj_id in self.tracked_objects: del self.tracked_objects[obj_id]
+                    self.tracked_objects.pop(obj_id, None)
 
-            # Gửi frame cho workers xử lý
-            if (self._frame_idx % PROCESS_EVERY_N_FRAMES) == 0:
-                try:
-                    small_frame = cv2.resize(current_raw_frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)
-                    if person_detection_is_on and not self.face_queue.full(): self.face_queue.put_nowait(small_frame)
-                    if not self.fire_queue.full(): self.fire_queue.put_nowait(small_frame)
-                except Exception as e:
-                    print(f"[Detect Loop] Lỗi khi gửi frame cho worker: {e}")
+            # Prepare small_frame for processing
+            try:
+                small_frame = cv2.resize(current_raw_frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)
+            except Exception as e:
+                small_frame = current_raw_frame.copy()
 
-            # Xử lý kết quả từ workers
+            # compute scaling factors from small_frame -> orig frame
             scale_x, scale_y = orig_w / float(self.PROC_W), orig_h / float(self.PROC_H)
+
+            # Person detection + processing on a schedule
+            if (self._frame_idx % PROCESS_EVERY_N_FRAMES) == 0 and person_detection_is_on:
+                try:
+                    if model_person is not None:
+                        per_res = model_person(small_frame)[0]
+                        person_boxes = []
+                        if hasattr(per_res, "boxes"):
+                            for b in per_res.boxes:
+                                # If model has class ids, filter for person class if needed.
+                                try:
+                                    x1,y1,x2,y2 = map(float, b.xyxy[0].tolist())
+                                except Exception:
+                                    # fallback if xyxy is different shape
+                                    x1,y1,x2,y2 = float(b.x1), float(b.y1), float(b.x2), float(b.y2)
+                                person_boxes.append((x1, y1, x2, y2))
+                        # call person processing (converts coords back to original frame inside)
+                        self._process_person_results(person_boxes, scale_x, scale_y, now, current_raw_frame)
+                except Exception as e:
+                    print("[Detect person error]", e)
+
+            # send to fire worker (non-blocking)
+            if not self.fire_queue.full():
+                try:
+                    self.fire_queue.put_nowait(small_frame)
+                except Exception:
+                    pass
+
+            # handle fire results
             try:
                 while not self.result_queue.empty():
                     result_type, results = self.result_queue.get_nowait()
-                    if result_type == "face" and person_detection_is_on:
-                        self._process_face_results(results, scale_x, scale_y, now, current_raw_frame)
-                    elif result_type == "fire":
+                    if result_type == "fire":
                         self._process_fire_results(results, scale_x, scale_y, now, current_raw_frame)
             except queue.Empty:
                 pass
 
-            # Vẽ kết quả lên frame hiển thị
+            # draw tracked people
             if person_detection_is_on:
                 for data in self.tracked_objects.values():
                     x1, y1, x2, y2 = data['bbox']
-                    color = (0, 255, 0) if data['name'] != "Nguoi la" else (0, 0, 255)
-                    label = f"{data['name']} ({data.get('distance', 0.0):.2f})"
+                    color = (0, 255, 0) if data.get('confirmed_name') != "Nguoi la" else (0, 0, 255)
+                    name = data.get('confirmed_name') or data.get('name') or "Nguoi la"
+                    label = f"{name} ({data.get('distance', 0.0):.2f})"
                     cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(display_frame, label, (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             
@@ -433,7 +662,7 @@ class Camera:
                 if cv2.waitKey(1) & 0xFF == ord('q'):
                     self.quit = True
             else:
-                time.sleep(0.001) # Sleep nhẹ để tránh 100% CPU
+                time.sleep(0.001)
 
         self.delete()
 

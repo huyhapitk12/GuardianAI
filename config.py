@@ -39,7 +39,7 @@ FIRE_REQUIRED = 10
 FIRE_CONFIDENCE_THRESHOLD = 0.3
 
 # ===================== Processing Settings =====================
-FRAMES_REQUIRED = 7            # number of consecutive frames required to confirm a face
+FRAMES_REQUIRED = 3            # number of consecutive frames required to confirm a face
 PROCESS_EVERY_N_FRAMES = 3
 PROCESS_SIZE = (1280, 720)
 DEBOUNCE_SECONDS = 30         # debounce time for the same alert (by type/name)
