@@ -15,7 +15,7 @@ from config import (
     MODEL_NAME, RECOGNITION_THRESHOLD, DATA_DIR, FRAMES_REQUIRED,
     PROCESS_EVERY_N_FRAMES, PROCESS_SIZE,
     FIRE_CONFIDENCE_THRESHOLD, FIRE_WINDOW_SECONDS, FIRE_REQUIRED,
-    MODEL_DIR
+    MODEL_DIR, TARGET_FPS
 )
 from shared_state import state as sm
 
@@ -151,7 +151,7 @@ def create_tracker_prefer_csrt():
 # --- Lớp Camera chính ---
 class Camera:
     def __init__(self, src=0, show_window=False):
-        self.cap = cv2.VideoCapture(src)
+        self.cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
         if not self.cap.isOpened():
             raise RuntimeError(f"Không thể mở camera/nguồn: {src}")
         self.quit = False
@@ -332,10 +332,33 @@ class Camera:
                     cv2.rectangle(frame_with_box, (x1_orig, y1_orig), (x2_orig, y2_orig), (0, 0, 255), 2)
                 
                 on_alert_callback(frame_with_box, "lua_chay", None, {})
-            self.fire_detection_timestamps.clear() # Reset sau khi gửi cảnh báo
+                # Lưu lại thời gian lần cuối phát hiện
+                self.last_fire_time = now  
+
+            # giữ timestamp trong cửa sổ
+            self.fire_detection_timestamps = [
+                t for t in self.fire_detection_timestamps if now - t < FIRE_WINDOW_SECONDS
+            ]
+
+        # 🔥 Nếu đã qua 5s từ lần phát hiện cuối cùng thì clear box
+        if hasattr(self, "last_fire_time") and now - self.last_fire_time > 5:
+            self.current_fire_boxes.clear()
 
     def detect(self):
+        frame_interval = 1.0 / TARGET_FPS
+        last_time = 0
+
         while not self.quit:
+            now = time.time()
+            if now - last_time < frame_interval:
+                time.sleep(0.005)
+                continue
+            
+            last_time = now
+
+            for _ in range(2):
+                self.cap.grab()
+
             ret, frame = self.cap.read()
             if not ret:
                 time.sleep(0.01)
