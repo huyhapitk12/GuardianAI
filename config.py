@@ -33,10 +33,17 @@ RECORD_SECONDS = 10
 TMP_DIR = os.path.join(BASE_DIR, "tmp")
 os.makedirs(TMP_DIR, exist_ok=True)
 
+<<<<<<< HEAD
 # ===================== Fire Detection Settings =====================
 FIRE_WINDOW_SECONDS = 4
 FIRE_REQUIRED = 10
 FIRE_CONFIDENCE_THRESHOLD = 0.3
+=======
+# Fire detection
+FIRE_WINDOW_SECONDS = 30
+FIRE_REQUIRED = 20
+FIRE_CONFIDENCE_THRESHOLD = 0.1  # ngưỡng confidence cho phát hiện lửa/khói
+>>>>>>> 4f55ea13a8fbe66354b12bd666f5143ca6074b37
 
 # ===================== Processing Settings =====================
 FRAMES_REQUIRED = 7            # number of consecutive frames required to confirm a face
@@ -55,5 +62,16 @@ AI_ENABLED = False
 if OPENAI_API_KEY:
     AI_ENABLED = True
 
+<<<<<<< HEAD
 # ===================== IP Camera Settings =====================
 IP_CAMERA_URL = 0  # rtsp://admin:XGZBPX@192.168.1.6:554/h264/ch1/sub_stream
+=======
+# Logging
+LOG_CSV = os.path.join(BASE_DIR, "events_log.csv")
+
+# IP camera
+IP_CAMERA_URL = "rtsp://admin:XGZBPX@192.168.0.103:554/h264/ch1/sub_stream"
+# rtsp://admin:XGZBPX@192.168.0.104:554/h264/ch1/sub_stream
+
+TARGET_FPS = 20
+>>>>>>> 4f55ea13a8fbe66354b12bd666f5143ca6074b37

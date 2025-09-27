@@ -9,6 +9,7 @@ import numpy as np
 from scipy.spatial.distance import cosine
 from ultralytics import YOLO
 from Lib.insightface.app import FaceAnalysis
+from config import TARGET_FPS
 
 from config import (
     EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH,
@@ -151,7 +152,12 @@ def create_tracker_prefer_csrt():
 # --- Lớp Camera chính ---
 class Camera:
     def __init__(self, src=0, show_window=False):
+<<<<<<< HEAD
         self.cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+=======
+        self.cap = cv2.VideoCapture(src)
+        self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # chỉ giữ frame mới nhất, bỏ backlog
+>>>>>>> 4f55ea13a8fbe66354b12bd666f5143ca6074b37
         if not self.cap.isOpened():
             raise RuntimeError(f"Không thể mở camera/nguồn: {src}")
         self.quit = False
@@ -347,6 +353,7 @@ class Camera:
     def detect(self):
         frame_interval = 1.0 / TARGET_FPS
         last_time = 0
+<<<<<<< HEAD
 
         while not self.quit:
             now = time.time()
@@ -359,6 +366,19 @@ class Camera:
             for _ in range(2):
                 self.cap.grab()
 
+=======
+        
+        while not self.quit:
+            now = time.time()
+            if now - last_time < frame_interval:
+                time.sleep(0.001)
+                continue
+            last_time = now
+            
+            # bỏ bớt frame cũ trong buffer (nếu có)
+            for _ in range(2):  
+                self.cap.grab()
+>>>>>>> 4f55ea13a8fbe66354b12bd666f5143ca6074b37
             ret, frame = self.cap.read()
             if not ret:
                 time.sleep(0.01)
