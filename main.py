@@ -7,14 +7,18 @@ import queue
 import logging
 import cv2
 import customtkinter as ctk
+import asyncio
 
 from detection_core import Camera
 import detection_core
-from telegram_bot import run_bot
+# <--- THAY ĐỔI DÒNG IMPORT NÀY ---
+from telegram_bot import run_bot, schedule_send_alert
+# --- KẾT THÚC THAY ĐỔI ---
 from video_recorder import send_photo, send_video_or_document
 from gui_manager import FaceManagerApp
-from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, IP_CAMERA_URL, DEBOUNCE_SECONDS
+from config import TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR, RECORD_SECONDS, IP_CAMERA_URL, DEBOUNCE_SECONDS, USER_RESPONSE_WINDOW_SECONDS, STRANGER_CLIP_DURATION
 from shared_state import state, response_queue, recorder, guard
+from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
@@ -23,11 +27,11 @@ log = logging.getLogger("guardian")
 sm = state
 response_q = response_queue
 
-USER_RESPONSE_WINDOW = 60
-
 def _on_alert(frame, reason, name, meta):
     if reason == "nguoi_quen":
         alert_key = (reason, name)
+    elif reason in ("lua_chay_khan_cap", "lua_chay_nghi_ngo"):
+        alert_key = "lua_chay"
     else:
         alert_key = reason
 
@@ -50,29 +54,54 @@ def _on_alert(frame, reason, name, meta):
         log.exception("Failed to write img: %s", e)
         return
 
-    alert_id = sm.create_alert(reason, chat_id, asked_for=name)
+    alert_id = sm.create_alert(reason, chat_id, asked_for=name, image_path=img_path)
+
+    caption = ""
+    reply_markup = None
+    is_fire_alert = False
 
     if reason == "nguoi_la":
-        caption = "⚠️ Phát hiện người lạ"
+        caption = f"⚠️ Phát hiện người lạ\n\nBạn có nhận ra người này không? (Trả lời trong {USER_RESPONSE_WINDOW_SECONDS}s: có/không/đã ra khỏi nhà)"
     elif reason == "nguoi_quen":
-        caption = f"👋 Phát hiện {name}"
-    else:
-        caption = "🔥 CẢNH BÁO CHÁY"
+        caption = f"👋 Phát hiện {name}\n\nBạn có nhận ra người này không? (Trả lời trong {USER_RESPONSE_WINDOW_SECONDS}s: có/không/đã ra khỏi nhà)"
+    elif reason == "lua_chay_nghi_ngo":
+        is_fire_alert = True
+        caption = "🟡 CẢNH BÁO VÀNG: Phát hiện dấu hiệu nghi ngờ cháy. Vui lòng kiểm tra hình ảnh và xác nhận."
+    elif reason == "lua_chay_khan_cap":
+        is_fire_alert = True
+        caption = "🔴 CẢNH BÁO ĐỎ KHẨN CẤP: Phát hiện đám cháy đang phát triển hoặc có cả lửa và khói. Yêu cầu kiểm tra ngay lập tức!"
 
-    if reason != "lua_chay":
-        caption += f"\n\nBạn có nhận ra người này không? (Trả lời trong {USER_RESPONSE_WINDOW}s: có/không/đã ra khỏi nhà)"
-    else:
-        caption += "\n\nVui lòng kiểm tra ngay lập tức!"
+    if is_fire_alert:
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ Cháy thật", callback_data=f"fire_real:{alert_id}"),
+                InlineKeyboardButton("❌ Báo động giả", callback_data=f"fire_false:{alert_id}"),
+            ],
+            [InlineKeyboardButton("📞 Gọi PCCC (114)", callback_data=f"fire_call:{alert_id}")],
+        ]
+        reply_markup = InlineKeyboardMarkup(keyboard)
+        
+        # <--- THAY ĐỔI KHỐI LỆNH NÀY ---
+        # Xóa bỏ cách gọi cũ gây lỗi
+        # threading.Thread(
+        #     target=lambda: asyncio.run(send_alert_with_buttons_async(chat_id, img_path, caption, reply_markup)),
+        #     daemon=True
+        # ).start()
+
+        # Thay bằng cách gọi an toàn qua "cầu nối"
+        schedule_send_alert(chat_id, img_path, caption, reply_markup)
+        # --- KẾT THÚC THAY ĐỔI ---
+
+    else: # Cảnh báo người thì gửi như cũ
+        threading.Thread(target=lambda: send_photo(TELEGRAM_TOKEN, chat_id, img_path, caption), daemon=True).start()
 
     if reason == "nguoi_la":
         cam_obj = globals().get("cam", None)
         try:
-            start_clip_for_alert(cam_obj, frame, alert_id, duration=8, fps=recorder.fps)
+            start_clip_for_alert(cam_obj, frame, alert_id, duration=STRANGER_CLIP_DURATION, fps=recorder.fps)
             log.info("Started immediate clip worker for stranger alert %s", alert_id)
         except Exception as e:
             log.exception("Failed to start immediate clip for alert %s: %s", alert_id, e)
-
-    threading.Thread(target=lambda: send_photo(TELEGRAM_TOKEN, chat_id, img_path, caption), daemon=True).start()
 
     def _try_start_recorder(reason, duration, timeout=3.0, **kwargs):
         q = queue.Queue()
@@ -123,36 +152,37 @@ def _on_alert(frame, reason, name, meta):
         rec["alert_id"] = alert_id
         log.info("Started new recorder for alert %s -> %s", alert_id, rec.get("path", "<no-path>"))
 
-    def watcher(aid):
-        start = time.time()
-        reply_received = False
-        while time.time() - start < USER_RESPONSE_WINDOW:
-            try:
-                resp = response_q.get(timeout=1.0)
-            except queue.Empty:
-                continue
-            
-            if resp and resp.get("alert_id") == aid:
-                reply_received = True
-                decision = resp.get("decision")
-                raw = resp.get("raw_text")
+    if not is_fire_alert:
+        def watcher(aid):
+            start = time.time()
+            reply_received = False
+            while time.time() - start < USER_RESPONSE_WINDOW_SECONDS:
+                try:
+                    resp = response_q.get(timeout=1.0)
+                except queue.Empty:
+                    continue
                 
+                if resp and resp.get("alert_id") == aid:
+                    reply_received = True
+                    decision = resp.get("decision")
+                    raw = resp.get("raw_text")
+                    
+                    recorder.resolve_user_wait()
+                    
+                    sm.resolve_alert(aid, raw)
+                    if decision in ("yes", "left"):
+                        log.info("Owner replied safe -> stop and delete rec")
+                        recorder.stop_and_discard()
+                    else:
+                        log.info("Negative/unclear reply -> keep recording")
+                    
+                    return
+
+            if not reply_received:
+                log.info("No reply in %ds for alert %s. Resolving user wait.", USER_RESPONSE_WINDOW_SECONDS, aid)
                 recorder.resolve_user_wait()
-                
-                sm.resolve_alert(aid, raw)
-                if decision in ("yes", "left"):
-                    log.info("Owner replied safe -> stop and delete rec")
-                    recorder.stop_and_discard()
-                else:
-                    log.info("Negative/unclear reply -> keep recording")
-                
-                return
 
-        if not reply_received:
-            log.info("No reply in %ds for alert %s. Resolving user wait.", USER_RESPONSE_WINDOW, aid)
-            recorder.resolve_user_wait()
-
-    threading.Thread(target=watcher, args=(alert_id,), daemon=True).start()
+        threading.Thread(target=watcher, args=(alert_id,), daemon=True).start()
 
 detection_core.on_alert_callback = _on_alert
 

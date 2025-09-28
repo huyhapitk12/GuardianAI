@@ -45,20 +45,25 @@ class StateManager:
                     return True
         return False
 
-    def create_alert(self, typ, chat_id, asked_for=None):
+    def create_alert(self, typ, chat_id, asked_for=None, image_path=None):
+    # --- KẾT THÚC THAY ĐỔI ---
         current_time = time.time()
         # Logic debounce này vẫn hữu ích để tránh tạo alert trùng lặp trong tích tắc
         for alert in self.active.values():
             if (alert['type'] == typ and str(alert['chat_id']) == str(chat_id) and 
                 not alert['resolved'] and (current_time - alert['ts'] < DEBOUNCE_SECONDS)):
-                # Nếu là người quen, phải check cả tên
                 if typ == 'nguoi_quen' and alert['asked_for'] == asked_for:
                     return alert['id']
                 elif typ != 'nguoi_quen':
                     return alert['id']
 
         aid = uuid.uuid4().hex
-        info = {"id": aid, "type": typ, "chat_id": chat_id, "asked_for": asked_for, "ts": current_time, "resolved": False, "reply": None}
+        info = {
+            "id": aid, "type": typ, "chat_id": chat_id, 
+            "asked_for": asked_for, "ts": current_time, 
+            "resolved": False, "reply": None,
+            "image_path": image_path # Dòng này giờ sẽ hoạt động đúng
+        }
         with self.lock:
             self.active[aid] = info
         return aid

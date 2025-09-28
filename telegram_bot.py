@@ -1,36 +1,38 @@
 # telegram_bot.py
 import threading
-# import queue # <--- XÓA DÒNG NÀY
 import httpx
 import os
 import asyncio
 import logging
+import shutil
 from typing import Optional
  
-from telegram import Update, Bot
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, HTTPX_TIMEOUT, OPENAI_API_KEY, AI_ENABLED, FALSE_POSITIVES_DIR, AI_MODEL, AI_MAX_TOKENS, AI_TEMPERATURE
+from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
+    Application,
     MessageHandler,
     filters,
     CommandHandler,
     ContextTypes,
+    CallbackQueryHandler,
 )
  
-from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, HTTPX_TIMEOUT, OPENAI_API_KEY, AI_ENABLED
-# from state_manager import StateManager # <--- XÓA DÒNG NÀY
-from shared_state import state, response_queue # <--- THAY ĐỔI DÒNG NÀY
- 
-# --- state & queues (exported) ---
-# state = StateManager() # <--- XÓA DÒNG NÀY
-# response_queue = queue.Queue() # <--- XÓA DÒNG NÀY
+from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, HTTPX_TIMEOUT, OPENAI_API_KEY, AI_ENABLED, FALSE_POSITIVES_DIR
+from shared_state import state, response_queue
  
 # --- logging ---
-# Sửa đổi logging để đảm bảo nó hoạt động nhất quán
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+# --- BIẾN TOÀN CỤC ĐỂ LƯU INSTANCE CỦA BOT APPLICATION VÀ EVENT LOOP ---
+_app_instance: Optional[Application] = None
+_app_loop: Optional[asyncio.AbstractEventLoop] = None
+# --- KẾT THÚC PHẦN THÊM MỚI ---
  
 # --- helper: create Bot instance for direct sends (used by other modules if needed) ---
 _bot_instance: Optional[Bot] = None
@@ -39,10 +41,42 @@ def get_bot():
     if _bot_instance is None:
         _bot_instance = Bot(token=TELEGRAM_TOKEN)
     return _bot_instance
- 
+
+# --- Gửi cảnh báo với nút bấm (hàm async gốc) ---
+async def send_alert_with_buttons_async(chat_id: str, image_path: str, caption: str, reply_markup: InlineKeyboardMarkup):
+    """Gửi ảnh cảnh báo kèm theo các nút bấm."""
+    bot = get_bot()
+    try:
+        with open(image_path, "rb") as photo_file:
+            await bot.send_photo(
+                chat_id=chat_id,
+                photo=photo_file,
+                caption=caption,
+                reply_markup=reply_markup
+            )
+        logger.info(f"Sent alert with buttons to {chat_id}")
+    except Exception as e:
+        logger.exception(f"Failed to send alert with buttons to {chat_id}")
+
+# --- HÀM "CẦU NỐI" AN TOÀN TỪ LUỒNG KHÁC ---
+def schedule_send_alert(chat_id: str, image_path: str, caption: str, reply_markup: InlineKeyboardMarkup):
+    """
+    Lên lịch gửi tin nhắn cảnh báo trên event loop của bot một cách an toàn từ một thread khác.
+    """
+    global _app_loop
+    if _app_loop:
+        # Sử dụng asyncio.run_coroutine_threadsafe để gửi một coroutine
+        # từ một thread khác vào event loop của bot.
+        # Đây là cách làm chuẩn và an toàn nhất.
+        asyncio.run_coroutine_threadsafe(
+            send_alert_with_buttons_async(chat_id, image_path, caption, reply_markup),
+            _app_loop
+        )
+    else:
+        logger.error("Telegram bot application loop not available. Cannot schedule message.")
+# --- KẾT THÚC PHẦN THAY ĐỔI ---
+
 # --- AI chat helper (async) ---
-AI_MODEL = os.getenv("AI_MODEL", "gpt-3.5-turbo")
- 
 async def ai_chat_async(prompt: str, user_info: dict = None) -> str:
     if not OPENAI_API_KEY:
         return "AI chưa được cấu hình (OPENAI_API_KEY missing)."
@@ -54,8 +88,8 @@ async def ai_chat_async(prompt: str, user_info: dict = None) -> str:
             {"role": "system", "content": "Bạn là Guardian Bot - trợ lý AI thân thiện, trả lời ngắn gọn bằng tiếng Việt khi có thể."},
             {"role": "user", "content": prompt}
         ],
-        "max_tokens": 512,
-        "temperature": 0.6
+        "max_tokens": AI_MAX_TOKENS,
+        "temperature": AI_TEMPERATURE
     }
  
     try:
@@ -72,7 +106,7 @@ async def ai_chat_async(prompt: str, user_info: dict = None) -> str:
     except Exception as e:
         logger.exception("ai_chat_async exception")
         return f"Lỗi gọi AI: {e}"
- 
+
 # --- Bot command handlers ---
 async def start_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
@@ -83,7 +117,6 @@ async def status_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.message:
         await update.message.reply_text(f"Alerts total: {len(alerts)}")
 
-# <--- THÊM HÀM MỚI DƯỚI ĐÂY --->
 async def toggle_detection_cmd(update: Update, context: ContextTypes.DEFAULT_TYPE):
     """Bật/tắt tính năng nhận diện người."""
     if not update.message:
@@ -95,11 +128,52 @@ async def toggle_detection_cmd(update: Update, context: ContextTypes.DEFAULT_TYP
     
     status_text = "🟢 BẬT" if new_state else "🔴 TẮT"
     await update.message.reply_text(f"✅ Đã cập nhật: Nhận diện người hiện đang {status_text}.")
-# <--- KẾT THÚC PHẦN THÊM MỚI --->
 
-# --- message listener: handles alert replies OR AI chat (fallback) ---
+# --- Xử lý nút bấm ---
+async def button_callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Xử lý các sự kiện bấm nút từ Inline Keyboard."""
+    query = update.callback_query
+    await query.answer()
+
+    try:
+        action, alert_id = query.data.split(":", 1)
+        logger.info(f"Button clicked: action='{action}', alert_id='{alert_id}'")
+
+        original_caption = query.message.caption if query.message else ""
+        new_caption = original_caption
+
+        if action == "fire_real":
+            new_caption += "\n\n✅ Đã xác nhận: CHÁY THẬT. Hãy hành động ngay!"
+        elif action == "fire_false":
+            new_caption += "\n\n❌ Đã xác nhận: Báo động giả."
+            alert_info = state.get_alert_by_id(alert_id)
+            if alert_info and alert_info.get("image_path"):
+                img_path = alert_info["image_path"]
+                if os.path.exists(img_path):
+                    os.makedirs(FALSE_POSITIVES_DIR, exist_ok=True)
+                    filename = os.path.basename(img_path)
+                    dest_path = os.path.join(FALSE_POSITIVES_DIR, f"false_{filename}")
+                    shutil.copy(img_path, dest_path)
+                    logger.info(f"Saved false positive image to: {dest_path}")
+                    new_caption += "\n(Đã lưu ảnh để cải thiện hệ thống)"
+                else:
+                    logger.warning(f"Image path for false positive not found: {img_path}")
+            else:
+                logger.warning(f"Could not find alert info or image_path for alert_id: {alert_id}")
+        elif action == "fire_call":
+            new_caption += "\n\n📞 Yêu cầu gọi PCCC đã được ghi nhận."
+
+        await query.edit_message_caption(caption=new_caption, reply_markup=None)
+
+    except Exception as e:
+        logger.exception("Error in button_callback_handler")
+        try:
+            await query.edit_message_caption(caption=f"{query.message.caption}\n\n⚠️ Đã xảy ra lỗi khi xử lý lựa chọn của bạn.", reply_markup=None)
+        except Exception:
+            pass
+
+# --- message listener ---
 async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # <--- THAY ĐỔI: Thêm logging chẩn đoán ngay từ đầu --->
     logger.info("--- message_listener triggered ---")
     if not update or not update.message:
         logger.warning("message_listener: update hoặc update.message is None.")
@@ -113,10 +187,9 @@ async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     user_info = {"id": user.id, "username": user.username, "name": f"{user.first_name} {user.last_name or ''}".strip()} if user else {}
  
-    # check for unresolved alert in this chat
     matched = state.latest_unresolved_for_chat(chat_id)
     
-    if matched:
+    if matched and matched['type'] in ('nguoi_quen', 'nguoi_la'):
         logger.info(f"Found matching unresolved alert: {matched['id']} (type: {matched['type']})")
         txt_lower = text.lower()
         neg = ["không", "ko", "k", "no", "not"]
@@ -171,13 +244,23 @@ async def message_listener(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(ai_reply[i:i+MAX_LEN])
  
 def run_bot():
-    asyncio.set_event_loop(asyncio.new_event_loop())
+    global _app_instance, _app_loop
+
+    # Tạo và thiết lập event loop cho thread này
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Lưu lại loop để các thread khác có thể truy cập
+    _app_loop = loop
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
- 
+    _app_instance = app
+
     app.add_handler(CommandHandler("start", start_cmd))
     app.add_handler(CommandHandler("status", status_cmd))
-    app.add_handler(CommandHandler("detect", toggle_detection_cmd)) # <-- THÊM DÒNG NÀY
+    app.add_handler(CommandHandler("detect", toggle_detection_cmd))
     app.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), message_listener))
+    app.add_handler(CallbackQueryHandler(button_callback_handler))
  
     logger.info("Telegram bot starting polling...")
     app.run_polling()

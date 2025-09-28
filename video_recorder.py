@@ -1,6 +1,6 @@
 # video_recorder.py
 import cv2, time, uuid, os, subprocess
-from config import TMP_DIR, RECORD_SECONDS, VIDEO_PREVIEW_LIMIT_MB, HTTPX_TIMEOUT, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID
+from config import TMP_DIR, RECORD_SECONDS, VIDEO_PREVIEW_LIMIT_MB, HTTPX_TIMEOUT, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, FFMPEG_TIMEOUT, RECORDER_FPS, RECORDER_FOURCC
 import httpx
 from shutil import which
 import threading
@@ -15,7 +15,7 @@ def try_compress_ffmpeg(inp):
     out = inp.replace(".mp4", f"_cmp_{uuid.uuid4().hex}.mp4")
     cmd = [ff, "-y", "-i", inp, "-vcodec", "libx264", "-crf", "28", "-preset", "veryfast", "-acodec", "aac", "-b:a", "96k", out]
     try:
-        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=300)
+        subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=FFMPEG_TIMEOUT)
         return out if os.path.exists(out) else None
     except Exception as e:
         if os.path.exists(out): os.remove(out)
@@ -56,7 +56,7 @@ def send_video_or_document(token, chat_id, video_path, caption=""):
     return ok
 
 class Recorder:
-    def __init__(self, out_dir="tmp", fps=20.0, fourcc_str="mp4v"):
+    def __init__(self, out_dir="tmp", fps=RECORDER_FPS, fourcc_str=RECORDER_FOURCC):
         self.out_dir = out_dir
         os.makedirs(self.out_dir, exist_ok=True)
         self.fps = float(fps)

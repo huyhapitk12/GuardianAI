@@ -11,13 +11,18 @@ from ultralytics import YOLO
 from Lib.insightface.app import FaceAnalysis
 from trackers import SORTTracker
 import supervision as sv
+from collections import deque
 
 from config import (
     EMBEDDING_FILE, NAMES_FILE, YOLO_MODEL_PATH, YOLO_PERSON_MODEL_PATH,
     MODEL_NAME, RECOGNITION_THRESHOLD, DATA_DIR, FRAMES_REQUIRED,
     PROCESS_EVERY_N_FRAMES, PROCESS_SIZE,
     FIRE_CONFIDENCE_THRESHOLD, FIRE_WINDOW_SECONDS, FIRE_REQUIRED,
-    MODEL_DIR, TARGET_FPS
+    MODEL_DIR, TARGET_FPS, INSIGHTFACE_CTX_ID, INSIGHTFACE_DET_SIZE,
+    IOU_THRESHOLD, TRACKER_TIMEOUT_SECONDS, FACE_RECOG_COOLDOWN,
+    FIRE_YELLOW_ALERT_FRAMES, FIRE_RED_ALERT_GROWTH_THRESHOLD,
+    FIRE_RED_ALERT_GROWTH_WINDOW, FIRE_RED_ALERT_LOCKDOWN_SECONDS,
+    STRANGER_CONFIRM_FRAMES, YOLO_PERSON_CONFIDENCE
 )
 from shared_state import state as sm
 
@@ -284,8 +289,13 @@ def _extract_face_from_person_box(frame, person_box, expand_ratio=0.4):
 # --- Lớp Camera chính ---
 class Camera:
     def __init__(self, src=0, show_window=False):
-        # mở camera và cấu hình
-        self.cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+        if isinstance(src, int):
+            # Nếu src là một số (như 0), đây là camera -> dùng DSHOW để tối ưu
+            self.cap = cv2.VideoCapture(src, cv2.CAP_DSHOW)
+        else:
+            # Nếu src là một chuỗi (đường dẫn file/URL) -> để OpenCV tự chọn backend tốt nhất
+            self.cap = cv2.VideoCapture(src)
+
         self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
         if not self.cap.isOpened():
             raise RuntimeError(f"Không thể mở camera/nguồn: {src}")
@@ -297,19 +307,31 @@ class Camera:
         self.result_queue = queue.Queue(maxsize=16)
 
         # state
-        self.fire_detection_timestamps = []
-        self.current_fire_boxes = []
+        self.recent_fire_detections = deque(maxlen=int(TARGET_FPS * FIRE_WINDOW_SECONDS))
+        self.current_fire_boxes_on_display = []
+        self.last_fire_alert_time = 0
         self.tracked_objects = {}
         self.next_object_id = 0
         self.person_detection_was_on = True
 
         # config
-        self.IOU_THRESHOLD = 0.3
-        self.TRACKER_TIMEOUT_SECONDS = 2.0
+        self.IOU_THRESHOLD = IOU_THRESHOLD
+        self.TRACKER_TIMEOUT_SECONDS = TRACKER_TIMEOUT_SECONDS
         self.PROC_W, self.PROC_H = PROCESS_SIZE
         # face recognition params
-        self.FACE_RECOG_COOLDOWN = 1.0
+        self.FACE_RECOG_COOLDOWN = FACE_RECOG_COOLDOWN
         self.FACE_CONFIRM_HITS = FRAMES_REQUIRED
+        # Cấu hình cho logic cảnh báo cháy phân cấp
+        self.YELLOW_ALERT_FRAMES = FIRE_YELLOW_ALERT_FRAMES
+        self.RED_ALERT_GROWTH_THRESHOLD = FIRE_RED_ALERT_GROWTH_THRESHOLD
+        self.RED_ALERT_GROWTH_WINDOW = FIRE_RED_ALERT_GROWTH_WINDOW
+        # Cấu hình cho chế độ "khóa" cảnh báo Đỏ
+        self.RED_ALERT_LOCKDOWN_SECONDS = FIRE_RED_ALERT_LOCKDOWN_SECONDS
+        self.red_alert_mode_active = False
+        self.red_alert_mode_until = 0
+        # <--- THÊM MỚI: Cấu hình cho cảnh báo người lạ ---
+        self.STRANGER_CONFIRM_FRAMES = STRANGER_CONFIRM_FRAMES
+        # --- KẾT THÚC THÊM MỚI ---
 
         # SORT tracker
         try:
@@ -359,11 +381,18 @@ class Camera:
                 fire_results = []
                 if results and hasattr(results[0], "boxes"):
                     for box in results[0].boxes:
-                        if float(box.conf[0]) >= FIRE_CONFIDENCE_THRESHOLD:
+                        conf = float(box.conf[0])
+                        if conf >= FIRE_CONFIDENCE_THRESHOLD:
                             x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                            cls_name = results[0].names.get(int(box.cls[0]), "unknown")
-                            if cls_name.lower() in ("fire", "smoke", "flame"):
-                                fire_results.append((x1, y1, x2, y2))
+                            cls_name = results[0].names.get(int(box.cls[0]), "unknown").lower()
+                            if cls_name in ("fire", "smoke", "flame"):
+                                area = (x2 - x1) * (y2 - y1)
+                                fire_results.append({
+                                    "bbox": (x1, y1, x2, y2),
+                                    "class": "smoke" if cls_name == "smoke" else "fire",
+                                    "area": area,
+                                    "conf": conf
+                                })
                 if fire_results:
                     self.result_queue.put(("fire", fire_results))
             except Exception as e:
@@ -418,7 +447,6 @@ class Camera:
             dets_array = np.hstack([xyxy_in, scores.reshape(-1,1)])
         else:
             xyxy_in = np.zeros((0, 4), dtype=float)
-            # THÊM DÒNG NÀY: Khởi tạo 'scores' là một mảng rỗng
             scores = np.array([], dtype=float)
             dets_array = np.zeros((0, 5), dtype=float)
 
@@ -450,9 +478,12 @@ class Camera:
                     d['bbox']=box; d['last_seen_by_detector']=now; d['last_updated']=now
                 else:
                     nid = self.next_object_id; self.next_object_id+=1
+                    # <--- THAY ĐỔI: Thêm các trường mới cho logic người lạ ---
                     self.tracked_objects[nid] = {'bbox': box, 'name': "Nguoi la", 'distance': float('inf'),
                                                  'last_seen_by_detector': now, 'last_updated': now,
-                                                 'face_hits':0, 'last_face_rec':0.0, 'confirmed_name': None, 'alert_sent':False}
+                                                 'face_hits':0, 'last_face_rec':0.0, 'confirmed_name': None, 'alert_sent':False,
+                                                 'frames_unidentified': 0, 'stranger_alert_sent': False}
+                    # --- KẾT THÚC THAY ĐỔI ---
             return
 
         # SORT returned something -> use it
@@ -465,9 +496,12 @@ class Camera:
 
             # ensure entry
             if tid not in self.tracked_objects:
+                # <--- THAY ĐỔI: Thêm các trường mới cho logic người lạ ---
                 self.tracked_objects[tid] = {'bbox': tb, 'name': "Nguoi la", 'distance': float('inf'),
                                              'last_seen_by_detector': now, 'last_updated': now,
-                                             'face_hits':0, 'last_face_rec':0.0, 'confirmed_name': None, 'alert_sent':False}
+                                             'face_hits':0, 'last_face_rec':0.0, 'confirmed_name': None, 'alert_sent':False,
+                                             'frames_unidentified': 0, 'stranger_alert_sent': False}
+                # --- KẾT THÚC THAY ĐỔI ---
             else:
                 data = self.tracked_objects[tid]
                 data['bbox'] = tb
@@ -482,7 +516,6 @@ class Camera:
             if need_recog:
                 data['last_face_rec'] = now
                 
-                # Cắt vùng ảnh của người từ frame gốc, thay vì đoán vị trí mặt
                 x1, y1, x2, y2 = tb
                 x1, y1 = max(0, x1), max(0, y1)
                 x2, y2 = min(frame.shape[1], x2), min(frame.shape[0], y2)
@@ -490,11 +523,9 @@ class Camera:
                 if x2 > x1 and y2 > y1:
                     person_crop = frame[y1:y2, x1:x2]                    
                     try:
-                        # Chạy nhận diện khuôn mặt trực tiếp trên vùng ảnh của người
                         faces = app.get(person_crop)
                         
                         if faces and len(faces) > 0:
-                            # Nếu có nhiều khuôn mặt, chọn cái lớn nhất
                             best_face = max(faces, key=lambda f: (f.bbox[2]-f.bbox[0])*(f.bbox[3]-f.bbox[1]))
                             emb = best_face.embedding
                             name, dist = match_face(emb)
@@ -504,26 +535,40 @@ class Camera:
                                 data['name'] = name
                                 data['distance'] = dist
                             else:
-                                # Nhận diện sai hoặc là người lạ
                                 data['face_hits'] = max(0, data.get('face_hits', 0) - 1)
                                 if data['face_hits'] == 0:
                                     data['name'] = "Nguoi la"
                                     data['distance'] = float('inf')
                         else:
-                            # Không tìm thấy khuôn mặt nào trong vùng ảnh của người
                             data['face_hits'] = max(0, data.get('face_hits', 0) - 1)
                             
                     except Exception as e:
                         print(f"[Face recog error on person_crop] {e}")
                         data['face_hits'] = max(0, data.get('face_hits', 0) - 1)
 
-            # confirm stable name
-            confirm_hits = getattr(self, "FACE_CONFIRM_HITS", FRAMES_REQUIRED)
-            if data.get('face_hits',0) >= confirm_hits and data.get('confirmed_name') != data.get('name'):
+            # <--- THAY ĐỔI: Toàn bộ logic cảnh báo người quen và người lạ ---
+            # 1. Cảnh báo NGƯỜI QUEN (logic cũ)
+            if data.get('face_hits',0) >= self.FACE_CONFIRM_HITS and data.get('confirmed_name') != data.get('name'):
                 data['confirmed_name'] = data['name']
                 if data['confirmed_name'] != "Nguoi la" and on_alert_callback and not data.get('alert_sent', False):
                     on_alert_callback(frame.copy(), "nguoi_quen", data['confirmed_name'], {"distance": data['distance']})
                     data['alert_sent'] = True
+
+            # 2. Cảnh báo NGƯỜI LẠ (logic mới)
+            # Nếu chưa xác nhận được danh tính, tăng bộ đếm
+            if data.get('confirmed_name') is None:
+                data['frames_unidentified'] = data.get('frames_unidentified', 0) + 1
+            
+            # Kiểm tra nếu bộ đếm vượt ngưỡng và chưa gửi cảnh báo
+            if (data.get('frames_unidentified', 0) > self.STRANGER_CONFIRM_FRAMES and
+                data.get('confirmed_name') is None and
+                not data.get('stranger_alert_sent', False) and
+                on_alert_callback):
+                
+                print(f"[Alert] Kích hoạt cảnh báo NGƯỜI LẠ cho track ID {tid}")
+                on_alert_callback(frame.copy(), "nguoi_la", None, {})
+                data['stranger_alert_sent'] = True # Đánh dấu đã gửi để không gửi lại
+            # --- KẾT THÚC THAY ĐỔI ---
 
         # prune
         ids_to_remove = [oid for oid, d in list(self.tracked_objects.items()) if now - d.get('last_seen_by_detector', now) > self.TRACKER_TIMEOUT_SECONDS]
@@ -531,29 +576,94 @@ class Camera:
             self.tracked_objects.pop(oid, None)
 
     def _process_fire_results(self, results, scale_x, scale_y, now, frame):
-        self.fire_detection_timestamps.extend([now] * len(results))
-        self.fire_detection_timestamps = [t for t in self.fire_detection_timestamps if now - t < FIRE_WINDOW_SECONDS]
+        """
+        Xử lý kết quả nhận diện cháy/khói và quyết định gửi cảnh báo phân cấp.
+        Các hộp bao quanh chỉ hiển thị cho các phát hiện trong khung hình hiện tại.
+        """
+        # 1. Cập nhật các hộp hiển thị CHỈ với các kết quả của khung hình hiện tại
+        for res in results:
+            x1, y1, x2, y2 = res['bbox']
+            x1_orig, y1_orig = int(x1 * scale_x), int(y1 * scale_y)
+            x2_orig, y2_orig = int(x2 * scale_x), int(y2 * scale_y)
+            self.current_fire_boxes_on_display.append((x1_orig, y1_orig, x2_orig, y2_orig))
 
-        if len(self.fire_detection_timestamps) >= FIRE_REQUIRED:
+        # 2. Thêm các phát hiện mới vào hàng đợi lịch sử để quyết định cảnh báo
+        for res in results:
+            res['timestamp'] = now
+            self.recent_fire_detections.append(res)
+
+        # Kiểm tra và reset chế độ khóa cảnh báo Đỏ nếu đã hết hạn
+        if self.red_alert_mode_active and now > self.red_alert_mode_until:
+            self.red_alert_mode_active = False
+            self.red_alert_mode_until = 0
+            print("[Fire Alert] Chế độ khóa cảnh báo Đỏ đã kết thúc.")
+
+        # Nếu không có phát hiện nào trong lịch sử (và cả hiện tại), thì không làm gì cả
+        if not self.recent_fire_detections:
+            return
+
+        # --- Logic quyết định cảnh báo (dựa trên lịch sử) ---
+        is_red_alert = False
+        
+        # Ưu tiên cảnh báo Đỏ nếu đang trong chế độ khóa
+        if self.red_alert_mode_active and results: # Chỉ kích hoạt nếu có phát hiện mới
+            is_red_alert = True
+            print("[Fire Alert] Cảnh báo ĐỎ được kích hoạt do đang trong chế độ khóa.")
+        else:
+            # Kiểm tra điều kiện cảnh báo ĐỎ (Khẩn cấp) lần đầu
+            fire_detections = [d for d in self.recent_fire_detections if d['class'] == 'fire']
+            if len(fire_detections) > 2:
+                current_fires = [d for d in fire_detections if now - d['timestamp'] < 0.5]
+                past_fires = [d for d in fire_detections if now - d['timestamp'] > self.RED_ALERT_GROWTH_WINDOW - 0.5 and now - d['timestamp'] < self.RED_ALERT_GROWTH_WINDOW]
+                
+                if current_fires and past_fires:
+                    avg_current_area = sum(d['area'] for d in current_fires) / len(current_fires)
+                    avg_past_area = sum(d['area'] for d in past_fires) / len(past_fires)
+                    if avg_current_area > avg_past_area * self.RED_ALERT_GROWTH_THRESHOLD:
+                        is_red_alert = True
+                        print("[Fire Alert] RED ALERT triggered by fire growth.")
+
+            if not is_red_alert:
+                classes_present = {d['class'] for d in self.recent_fire_detections}
+                if 'fire' in classes_present and 'smoke' in classes_present:
+                    is_red_alert = True
+                    print("[Fire Alert] RED ALERT triggered by simultaneous fire and smoke.")
+
+        # Nếu là cảnh báo ĐỎ, gửi và xử lý
+        if is_red_alert:
+            if not self.red_alert_mode_active:
+                self.red_alert_mode_active = True
+                self.red_alert_mode_until = now + self.RED_ALERT_LOCKDOWN_SECONDS
+                print(f"[Fire Alert] Kích hoạt chế độ khóa cảnh báo Đỏ trong {self.RED_ALERT_LOCKDOWN_SECONDS} giây.")
+
             if on_alert_callback:
                 frame_with_box = frame.copy()
-                self.current_fire_boxes.clear()
-                for box in results:
-                    x1, y1, x2, y2 = box
+                # Vẽ tất cả các hộp trong lịch sử lên ảnh cảnh báo để cung cấp ngữ cảnh
+                for d in self.recent_fire_detections:
+                    x1, y1, x2, y2 = d['bbox']
                     x1_orig, y1_orig = int(x1 * scale_x), int(y1 * scale_y)
                     x2_orig, y2_orig = int(x2 * scale_x), int(y2 * scale_y)
-                    self.current_fire_boxes.append((x1_orig, y1_orig, x2_orig, y2_orig))
-                    cv2.rectangle(frame_with_box, (x1_orig, y1_orig), (x2_orig, y2_orig), (0, 0, 255), 2)
+                    cv2.rectangle(frame_with_box, (x1_orig, y1_orig), (x2_orig, y2_orig), (0, 0, 255), 3)
                 
-                on_alert_callback(frame_with_box, "lua_chay", None, {})
-                self.last_fire_time = now  
+                on_alert_callback(frame_with_box, "lua_chay_khan_cap", None, {})
+                self.recent_fire_detections.clear() # Xóa lịch sử để tránh gửi lại ngay lập tức
+            return
 
-            self.fire_detection_timestamps = [
-                t for t in self.fire_detection_timestamps if now - t < FIRE_WINDOW_SECONDS
-            ]
-
-        if hasattr(self, "last_fire_time") and now - self.last_fire_time > 5:
-            self.current_fire_boxes.clear()
+        # Nếu không phải ĐỎ, kiểm tra điều kiện cảnh báo VÀNG (Nghi ngờ)
+        if len(self.recent_fire_detections) >= self.YELLOW_ALERT_FRAMES:
+            print(f"[Fire Alert] YELLOW ALERT triggered by sustained detection ({len(self.recent_fire_detections)} frames).")
+            if on_alert_callback:
+                frame_with_box = frame.copy()
+                # Vẽ tất cả các hộp trong lịch sử lên ảnh cảnh báo
+                for d in self.recent_fire_detections:
+                    x1, y1, x2, y2 = d['bbox']
+                    x1_orig, y1_orig = int(x1 * scale_x), int(y1 * scale_y)
+                    x2_orig, y2_orig = int(x2 * scale_x), int(y2 * scale_y)
+                    cv2.rectangle(frame_with_box, (x1_orig, y1_orig), (x2_orig, y2_orig), (0, 255, 255), 2)
+                
+                on_alert_callback(frame_with_box, "lua_chay_nghi_ngo", None, {})
+                self.recent_fire_detections.clear() # Xóa lịch sử để tránh gửi lại ngay lập tức
+            return
 
     def detect(self):
         frame_interval = 1.0 / TARGET_FPS
@@ -610,18 +720,15 @@ class Camera:
             if (self._frame_idx % PROCESS_EVERY_N_FRAMES) == 0 and person_detection_is_on:
                 try:
                     if model_person is not None:
-                        per_res = model_person(small_frame)[0]
+                        per_res = model_person(small_frame, conf=YOLO_PERSON_CONFIDENCE, classes=0, verbose=False)[0]
                         person_boxes = []
                         if hasattr(per_res, "boxes"):
                             for b in per_res.boxes:
-                                # If model has class ids, filter for person class if needed.
                                 try:
                                     x1,y1,x2,y2 = map(float, b.xyxy[0].tolist())
                                 except Exception:
-                                    # fallback if xyxy is different shape
                                     x1,y1,x2,y2 = float(b.x1), float(b.y1), float(b.x2), float(b.y2)
                                 person_boxes.append((x1, y1, x2, y2))
-                        # call person processing (converts coords back to original frame inside)
                         self._process_person_results(person_boxes, scale_x, scale_y, now, current_raw_frame)
                 except Exception as e:
                     print("[Detect person error]", e)
@@ -632,6 +739,8 @@ class Camera:
                     self.fire_queue.put_nowait(small_frame)
                 except Exception:
                     pass
+
+            self.current_fire_boxes_on_display = []
 
             # handle fire results
             try:
@@ -646,14 +755,15 @@ class Camera:
             if person_detection_is_on:
                 for data in self.tracked_objects.values():
                     x1, y1, x2, y2 = data['bbox']
-                    color = (0, 255, 0) if data.get('confirmed_name') != "Nguoi la" else (0, 0, 255)
+                    color = (0, 255, 0) if data.get('confirmed_name') and data.get('confirmed_name') != "Nguoi la" else (0, 0, 255)
                     name = data.get('confirmed_name') or data.get('name') or "Nguoi la"
                     label = f"{name} ({data.get('distance', 0.0):.2f})"
                     cv2.rectangle(display_frame, (x1, y1), (x2, y2), color, 2)
                     cv2.putText(display_frame, label, (x1, max(0, y1 - 10)), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
             
-            for (x1, y1, x2, y2) in self.current_fire_boxes:
-                 cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            # Vẽ các hộp cháy/khói từ state (chỉ chứa các phát hiện của frame hiện tại)
+            for (x1, y1, x2, y2) in self.current_fire_boxes_on_display:
+                 cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
 
             self._update_last_frame(display_frame, current_raw_frame)
 
