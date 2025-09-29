@@ -29,28 +29,6 @@ from shared_state import state as sm
 # --- Hook để main.py có thể bind hàm callback vào ---
 on_alert_callback = None
 
-# --- Helper Functions ---
-def _colorfulness_score(img):
-    """Đo độ 'màu sắc' của ảnh để tự động phát hiện định dạng video."""
-    if img is None or img.ndim < 3 or img.shape[2] != 3:
-        return 0.0
-    return float(img[..., 0].std() + img[..., 1].std() + img[..., 2].std())
-
-def _apply_conversion(frame, mode):
-    """Áp dụng các chuyển đổi màu sắc phổ biến cho frame từ camera."""
-    try:
-        if mode == 'NONE': return frame
-        if mode == 'BAYER_BG': return cv2.cvtColor(frame, cv2.COLOR_BAYER_BG2BGR)
-        if mode == 'BAYER_RG': return cv2.cvtColor(frame, cv2.COLOR_BAYER_RG2BGR)
-        if mode == 'BAYER_GB': return cv2.cvtColor(frame, cv2.COLOR_BAYER_GB2BGR)
-        if mode == 'BAYER_GR': return cv2.cvtColor(frame, cv2.COLOR_BAYER_GR2BGR)
-        if mode == 'YUY2': return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_YUY2)
-        if mode == 'NV12': return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_NV12)
-        if mode == 'I420': return cv2.cvtColor(frame, cv2.COLOR_YUV2BGR_I420)
-    except Exception:
-        return frame
-    return frame
-
 # --- Tải các model và dữ liệu một lần khi khởi động ---
 print("[detection_core] Bắt đầu tải các model...")
 try:
@@ -411,25 +389,6 @@ class Camera:
         with self._frame_lock:
             return (True, self._raw_frame.copy()) if self._raw_frame is not None else (False, None)
 
-    def _auto_detect_format(self, frame):
-        """Tự động phát hiện và chọn định dạng màu tốt nhất cho camera."""
-        if self._frame_idx < 30:
-            modes = ['NONE', 'BAYER_BG', 'BAYER_RG', 'BAYER_GB', 'BAYER_GR', 'YUY2', 'NV12', 'I420']
-            candidates = []
-            for mode in modes:
-                try:
-                    cand_frame = _apply_conversion(frame, mode)
-                    score = _colorfulness_score(cand_frame)
-                    if score > 0: candidates.append((mode, score))
-                except Exception:
-                    pass
-            if candidates:
-                best_mode, best_score = max(candidates, key=lambda x: x[1])
-                if best_score > 10:
-                    self._conversion_mode = best_mode
-                    print(f"[Camera Format] Tự động chọn định dạng: {best_mode} (score={best_score:.2f})")
-        return _apply_conversion(frame, self._conversion_mode) if self._conversion_mode else frame
-
     def _process_person_results(self, person_results, scale_x, scale_y, now, frame):
         """
         Xử lý person detection -> gọi SORT -> crop face -> face recognition -> cập nhật tracked_objects.
@@ -688,9 +647,8 @@ class Camera:
             self._frame_idx += 1
             now = time.time()
             
-            current_raw_frame = self._auto_detect_format(frame)
-            display_frame = current_raw_frame.copy()
-            orig_h, orig_w = current_raw_frame.shape[:2]
+            display_frame = frame.copy()
+            orig_h, orig_w = frame.shape[:2]
 
             person_detection_is_on = sm.is_person_detection_enabled()
             if not person_detection_is_on and self.person_detection_was_on:
@@ -709,9 +667,9 @@ class Camera:
 
             # Prepare small_frame for processing
             try:
-                small_frame = cv2.resize(current_raw_frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)
+                small_frame = cv2.resize(frame, (self.PROC_W, self.PROC_H), interpolation=cv2.INTER_AREA)
             except Exception as e:
-                small_frame = current_raw_frame.copy()
+                small_frame = frame.copy()
 
             # compute scaling factors from small_frame -> orig frame
             scale_x, scale_y = orig_w / float(self.PROC_W), orig_h / float(self.PROC_H)
@@ -729,7 +687,7 @@ class Camera:
                                 except Exception:
                                     x1,y1,x2,y2 = float(b.x1), float(b.y1), float(b.x2), float(b.y2)
                                 person_boxes.append((x1, y1, x2, y2))
-                        self._process_person_results(person_boxes, scale_x, scale_y, now, current_raw_frame)
+                        self._process_person_results(person_boxes, scale_x, scale_y, now, frame)
                 except Exception as e:
                     print("[Detect person error]", e)
 
@@ -747,7 +705,7 @@ class Camera:
                 while not self.result_queue.empty():
                     result_type, results = self.result_queue.get_nowait()
                     if result_type == "fire":
-                        self._process_fire_results(results, scale_x, scale_y, now, current_raw_frame)
+                        self._process_fire_results(results, scale_x, scale_y, now, frame)
             except queue.Empty:
                 pass
 
@@ -765,7 +723,7 @@ class Camera:
             for (x1, y1, x2, y2) in self.current_fire_boxes_on_display:
                  cv2.rectangle(display_frame, (x1, y1), (x2, y2), (0, 165, 255), 2)
 
-            self._update_last_frame(display_frame, current_raw_frame)
+            self._update_last_frame(display_frame, frame)
 
             if self.show_window:
                 cv2.imshow("Guardian Detection", display_frame)
