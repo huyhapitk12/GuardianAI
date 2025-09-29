@@ -81,4 +81,4 @@ SPAM_GUARD_MIN_INTERVAL = 10        # Khoảng cách tối thiểu giữa 2 cả
 SPAM_GUARD_MAX_PER_MINUTE = 4       # Số cảnh báo tối đa trong 1 phút
 
 # ===================== IP Camera Settings =====================
-IP_CAMERA_URL = 0 #"test_fire.mp4"   rtsp://admin:XGZBPX@192.168.1.6:554/h264/ch1/sub_stream
+IP_CAMERA_URL = 0#   rtsp://admin:XGZBPX@192.168.1.6:554/h264/ch1/sub_stream

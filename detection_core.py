@@ -9,7 +9,7 @@ import numpy as np
 from scipy.spatial.distance import cosine
 from ultralytics import YOLO
 from Lib.insightface.app import FaceAnalysis
-from trackers import SORTTracker
+from Lib.trackers import SORTTracker
 import supervision as sv
 from collections import deque
 
