@@ -11,7 +11,7 @@ import re
 from video_recorder import send_photo
 from typing import Optional
  
-from config import TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, HTTPX_TIMEOUT, OPENAI_API_KEY, AI_ENABLED, AI_MODEL, AI_MAX_TOKENS, AI_TEMPERATURE, TMP_DIR
+from config import TELEGRAM_TOKEN, HTTPX_TIMEOUT, API_KEY, API_BASE, AI_ENABLED, AI_MODEL, AI_MAX_TOKENS, AI_TEMPERATURE, TMP_DIR
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import (
     ApplicationBuilder,
@@ -130,9 +130,9 @@ def add_system_message_to_history(chat_id: str, text: str):
     logger.info(f"Đã thêm cảnh báo vào lịch sử trò chuyện cho chat_id {chat_id_str}")
 
 async def ai_chat_async(prompt: str, history: list, user_info: dict = None, system_instruction: str = AI_SYSTEM_INSTRUCTION) -> str:
-    if not OPENAI_API_KEY:
+    if not API_KEY:
         return "AI chưa được cấu hình (thiếu API Key)."
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{AI_MODEL}:generateContent?key={OPENAI_API_KEY}"
+    url = f"{API_BASE}/{AI_MODEL}:generateContent?key={API_KEY}"
     headers = {"Content-Type": "application/json"}
     messages = history + [{"role": "user", "parts": [{"text": prompt}]}]
     payload = {

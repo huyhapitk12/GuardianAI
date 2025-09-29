@@ -72,9 +72,10 @@ HTTPX_TIMEOUT = 180
 USER_RESPONSE_WINDOW_SECONDS = 30   # Thời gian chờ người dùng phản hồi cảnh báo (giây)
 
 # ===================== AI (Optional) Settings =====================
-OPENAI_API_KEY = "AIzaSyBvBkXirUSiTAqXNykZjfoHWwdPqZDZYnA"  # set if you want AI classification
-AI_ENABLED = True
-if OPENAI_API_KEY:
+API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
+API_KEY = "AIzaSyBvBkXirUSiTAqXNykZjfoHWwdPqZDZYnA"
+AI_ENABLED = False
+if API_KEY:
     AI_ENABLED = True
 AI_MODEL = "gemini-2.5-flash"
 AI_MAX_TOKENS = 512
