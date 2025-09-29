@@ -1,7 +1,7 @@
 # state_manager.py
 import time, threading, uuid
 from config import DEBOUNCE_SECONDS
-from typing import Union, Tuple
+from typing import Union, Tuple, Optional, Dict, Any
 
 class StateManager:
     def __init__(self):
@@ -73,6 +73,11 @@ class StateManager:
             if aid in self.active:
                 self.active[aid]["resolved"] = True
                 self.active[aid]["reply"] = reply_text
+
+    def get_alert_by_id(self, aid: str) -> Optional[Dict[str, Any]]:
+        """Lấy thông tin của một cảnh báo bằng ID của nó."""
+        with self.lock:
+            return self.active.get(aid)
 
     def latest_unresolved_for_chat(self, chat_id):
         with self.lock:

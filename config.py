@@ -32,8 +32,6 @@ YOLO_PERSON_MODEL_PATH = os.path.join(MODEL_DIR, YOLO_SIZE.capitalize(), "Person
 RECORD_SECONDS = 10
 TMP_DIR = os.path.join(BASE_DIR, "tmp")
 os.makedirs(TMP_DIR, exist_ok=True)
-FALSE_POSITIVES_DIR = os.path.join(BASE_DIR, "false_positives")
-os.makedirs(FALSE_POSITIVES_DIR, exist_ok=True)
 RECORDER_FPS = 20.0
 RECORDER_FOURCC = "mp4v"
 FFMPEG_TIMEOUT = 300  # 5 phút
@@ -45,8 +43,14 @@ FIRE_REQUIRED = 10 # Giờ đây được dùng như một ngưỡng tối thi�
 FIRE_CONFIDENCE_THRESHOLD = 0.7
 FIRE_YELLOW_ALERT_FRAMES = 5        # Số frame liên tục có tín hiệu để kích hoạt cảnh báo Vàng
 FIRE_RED_ALERT_GROWTH_THRESHOLD = 1.5 # Ngưỡng tăng trưởng diện tích (50%) để kích hoạt cảnh báo Đỏ
-FIRE_RED_ALERT_GROWTH_WINDOW = 1.5  # Khoảng thời gian (giây) để so sánh sự tăng trưởng
+FIRE_RED_ALERT_GROWTH_WINDOW = 7  # Khoảng thời gian (giây) để so sánh sự tăng trưởng
 FIRE_RED_ALERT_LOCKDOWN_SECONDS = 300 # Thời gian "khóa" cảnh báo Đỏ sau khi kích hoạt (5 phút)
+
+# ===================== Alarm Settings =====================
+ALARM_SOUND_FILE = os.path.join(BASE_DIR, "Data", "Audio", "alarm.mp3")
+ALARM_FADE_IN_DURATION = 2  # Thời gian tăng âm lượng từ thấp đến cao (giây)
+ALARM_START_VOLUME = 1.0     # Âm lượng ban đầu (từ 0.0 đến 1.0)
+ALARM_MAX_VOLUME = 5.0       # Âm lượng tối đa (từ 0.0 đến 1.0)
 
 # ===================== Processing Settings =====================
 FRAMES_REQUIRED = 3            # number of consecutive frames required to confirm a face
@@ -65,14 +69,14 @@ INSIGHTFACE_CTX_ID = -1             # ID của GPU (-1 cho CPU, 0 cho GPU đầu
 # ===================== Telegram Upload Settings =====================
 VIDEO_PREVIEW_LIMIT_MB = 48.0
 HTTPX_TIMEOUT = 180
-USER_RESPONSE_WINDOW_SECONDS = 60   # Thời gian chờ người dùng phản hồi cảnh báo (giây)
+USER_RESPONSE_WINDOW_SECONDS = 30   # Thời gian chờ người dùng phản hồi cảnh báo (giây)
 
 # ===================== AI (Optional) Settings =====================
-OPENAI_API_KEY = None  # set if you want AI classification
-AI_ENABLED = False
+OPENAI_API_KEY = "AIzaSyBvBkXirUSiTAqXNykZjfoHWwdPqZDZYnA"  # set if you want AI classification
+AI_ENABLED = True
 if OPENAI_API_KEY:
     AI_ENABLED = True
-AI_MODEL = os.getenv("AI_MODEL", "gpt-3.5-turbo")
+AI_MODEL = "gemini-2.5-flash"
 AI_MAX_TOKENS = 512
 AI_TEMPERATURE = 0.6
 

@@ -2,15 +2,24 @@
 import time
 import threading
 from typing import Union, Tuple
+from config import DEBOUNCE_SECONDS, SPAM_GUARD_MIN_INTERVAL, SPAM_GUARD_MAX_PER_MINUTE
 
 class SpamGuard:
-    def __init__(self, debounce_seconds=30, min_interval=10, max_per_minute=3):
+    def __init__(self, debounce_seconds=DEBOUNCE_SECONDS, min_interval=SPAM_GUARD_MIN_INTERVAL, max_per_minute=SPAM_GUARD_MAX_PER_MINUTE):
         self.debounce_seconds = debounce_seconds  # chặn lặp lại cùng 1 key cảnh báo
         self.min_interval = min_interval          # khoảng cách tối thiểu giữa 2 alert bất kỳ
         self.max_per_minute = max_per_minute      # số lần tối đa cho phép trong 1 phút
         self.last_alert_time = {}                 # Sẽ lưu key -> timestamp
         self.alert_history = []                   # Sẽ lưu (timestamp, key)
         self.lock = threading.Lock()
+        self.muted_until = {}
+
+    def mute(self, key: Union[str, Tuple], duration_seconds: int):
+        """Tạm thời bỏ qua tất cả các cảnh báo cho một key cụ thể."""
+        with self.lock:
+            now = time.time()
+            self.muted_until[key] = now + duration_seconds
+            print(f"[SpamGuard] Key '{key}' đã bị tắt tiếng trong {duration_seconds} giây.")
 
     def allow(self, key: Union[str, Tuple]) -> bool:
         """
@@ -19,6 +28,10 @@ class SpamGuard:
         """
         now = time.time()
         with self.lock:
+            if self.muted_until.get(key, 0) > now:
+                # Bị tắt tiếng, không cho phép
+                return False
+
             # --- 1. Kiểm tra debounce cho cùng 1 key cụ thể ---
             last_for_key = self.last_alert_time.get(key, 0)
             if now - last_for_key < self.debounce_seconds:

@@ -14,3 +14,5 @@ guard = SpamGuard(
     min_interval=SPAM_GUARD_MIN_INTERVAL, 
     max_per_minute=SPAM_GUARD_MAX_PER_MINUTE
 )
+
+camera_instance = None
