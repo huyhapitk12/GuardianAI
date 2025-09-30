@@ -1,15 +1,15 @@
 # telegram_bot.py
 import threading
-import httpx
 import os
 import asyncio
 import logging
-import shutil
 import uuid
 import cv2
 import re
+import openai
 from video_recorder import send_photo
 from typing import Optional
+from openai import AsyncOpenAI
  
 from config import TELEGRAM_TOKEN, HTTPX_TIMEOUT, API_KEY, API_BASE, AI_ENABLED, AI_MODEL, AI_MAX_TOKENS, AI_TEMPERATURE, TMP_DIR
 from telegram import Update, Bot, InlineKeyboardButton, InlineKeyboardMarkup
@@ -130,32 +130,57 @@ def add_system_message_to_history(chat_id: str, text: str):
     logger.info(f"Đã thêm cảnh báo vào lịch sử trò chuyện cho chat_id {chat_id_str}")
 
 async def ai_chat_async(prompt: str, history: list, user_info: dict = None, system_instruction: str = AI_SYSTEM_INSTRUCTION) -> str:
-    if not API_KEY:
-        return "AI chưa được cấu hình (thiếu API Key)."
-    url = f"{API_BASE}/{AI_MODEL}:generateContent?key={API_KEY}"
-    headers = {"Content-Type": "application/json"}
-    messages = history + [{"role": "user", "parts": [{"text": prompt}]}]
-    payload = {
-        "contents": messages,
-        "system_instruction": {"parts": [{"text": system_instruction}]},
-        "generationConfig": {"maxOutputTokens": AI_MAX_TOKENS, "temperature": AI_TEMPERATURE}
-    }
+    if not API_BASE:
+        return "AI chưa được cấu hình (thiếu API_BASE)."
+
     try:
-        async with httpx.AsyncClient(timeout=HTTPX_TIMEOUT) as client:
-            r = await client.post(url, headers=headers, json=payload)
-            r.raise_for_status()
-            data = r.json()
-            if "candidates" in data and data["candidates"]:
-                candidate = data["candidates"][0]
-                if "content" in candidate and "parts" in candidate["content"] and candidate["content"]["parts"]:
-                    return (candidate["content"]["parts"][0].get("text", "") or "").strip()
-            if "promptFeedback" in data and "blockReason" in data["promptFeedback"]:
-                reason = data["promptFeedback"]["blockReason"]
-                return f"AI không trả lời được (yêu cầu bị chặn vì lý do: {reason})."
-            return "AI không trả lời được (phản hồi không hợp lệ)."
+        client = AsyncOpenAI(
+            base_url=API_BASE,
+            api_key=API_KEY,  # Nhiều server local không cần key, có thể điền "not-needed"
+            timeout=HTTPX_TIMEOUT,
+        )
+
+        # Chuyển đổi định dạng history từ Google sang OpenAI
+        messages = []
+        if system_instruction:
+            messages.append({"role": "system", "content": system_instruction})
+        
+        for item in history:
+            role = item.get("role")
+            if role == "model":
+                role = "assistant" # Chuyển 'model' thành 'assistant'
+            try:
+                content = item.get("parts", [{}])[0].get("text", "")
+                if content and role in ["user", "assistant"]:
+                    messages.append({"role": role, "content": content})
+            except (IndexError, AttributeError):
+                continue
+
+        messages.append({"role": "user", "content": prompt})
+
+        # Gọi API một cách gọn gàng
+        response = await client.chat.completions.create(
+            model=AI_MODEL,
+            messages=messages,
+            max_tokens=AI_MAX_TOKENS,
+            temperature=AI_TEMPERATURE
+        )
+
+        # Lấy kết quả trả về
+        if response.choices:
+            return response.choices[0].message.content.strip()
+        else:
+            return "AI không trả lời được (không có lựa chọn nào)."
+
+    except openai.APIConnectionError as e:
+        logger.error(f"Không thể kết nối đến server AI: {e.__cause__}")
+        return "Lỗi: Không thể kết nối đến server AI."
+    except openai.APIStatusError as e:
+        logger.error(f"Lỗi API từ server: {e.status_code} - {e.response}")
+        return f"Lỗi từ server AI: {e.status_code}"
     except Exception as e:
-        logger.exception("Lỗi trong hàm ai_chat_async")
-        return f"Lỗi khi gọi AI: {e}"
+        logger.exception("Lỗi không xác định trong hàm ai_chat_async")
+        return f"Lỗi không xác định khi gọi AI: {e}"
 
 async def ai_confirm_stranger_async(user_response: str) -> str:
     """Sử dụng AI để phân loại câu trả lời của người dùng thành 'yes', 'no', hoặc 'unknown'."""

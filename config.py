@@ -72,18 +72,18 @@ HTTPX_TIMEOUT = 180
 USER_RESPONSE_WINDOW_SECONDS = 30   # Thời gian chờ người dùng phản hồi cảnh báo (giây)
 
 # ===================== AI (Optional) Settings =====================
-API_BASE = "https://generativelanguage.googleapis.com/v1beta/models"
-API_KEY = "AIzaSyBvBkXirUSiTAqXNykZjfoHWwdPqZDZYnA"
+API_BASE = None
+API_KEY = None
 AI_ENABLED = False
 if API_KEY:
     AI_ENABLED = True
-AI_MODEL = "gemini-2.5-flash"
+AI_MODEL = None
 AI_MAX_TOKENS = 512
-AI_TEMPERATURE = 0.6
+AI_TEMPERATURE = 0.5
 
 # ===================== Spam Guard Settings =====================
 SPAM_GUARD_MIN_INTERVAL = 10        # Khoảng cách tối thiểu giữa 2 cảnh báo bất kỳ
 SPAM_GUARD_MAX_PER_MINUTE = 4       # Số cảnh báo tối đa trong 1 phút
 
 # ===================== IP Camera Settings =====================
-IP_CAMERA_URL = 0#   rtsp://admin:XGZBPX@192.168.1.6:554/h264/ch1/sub_stream
+IP_CAMERA_URL = None
