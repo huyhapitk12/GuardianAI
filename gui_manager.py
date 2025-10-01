@@ -9,6 +9,7 @@ from PIL import Image
 
 from detection_core import update_known_data, update_model, app, update_yolo_model, Camera
 from config import EMBEDDING_FILE, NAMES_FILE, DATA_DIR, YOLO_SIZE
+import shared_state
 from shared_state import state as sm
 
 ctk.set_appearance_mode("Dark")
@@ -17,7 +18,11 @@ ctk.set_default_color_theme("blue")
 class FaceManagerApp:
     def __init__(self, root, camera_instance: Camera):
         self.root = root
-        self.camera = camera_instance
+
+        self.cameras = shared_state.active_cameras
+        self.current_camera_name = list(self.cameras.keys())[0] if self.cameras else None
+        self.camera = self.cameras.get(self.current_camera_name)
+
         self.root.title("Guardian - Face Manager")
         self.root.geometry("1100x700")
         self.root.minsize(900, 600)
@@ -86,11 +91,27 @@ class FaceManagerApp:
         self.person_view_frame.grid_columnconfigure(0, weight=1)
         self.person_view_frame.grid_rowconfigure(1, weight=1)
 
+        camera_select_label = ctk.CTkLabel(self.left_frame, text="Chọn Camera")
+        camera_select_label.grid(row=4, column=0, padx=20, pady=(10, 0), sticky="ew")
+
+        self.camera_var = ctk.StringVar(value=self.current_camera_name)
+        camera_options = list(self.cameras.keys())
+        self.camera_menu = ctk.CTkOptionMenu(self.left_frame, values=camera_options,
+                                             variable=self.camera_var, command=self.switch_camera)
+        self.camera_menu.grid(row=5, column=0, padx=10, pady=10, sticky="ew")
+
         self.populate_person_list()
         self.show_video_view()
 
         self.sync_detection_switch_state()
         self.update_video_feed()
+
+    def switch_camera(self, new_camera_name: str):
+        """Chuyển đổi camera đang hiển thị trên GUI."""
+        self.current_camera_name = new_camera_name
+        self.camera = self.cameras.get(new_camera_name)
+        self.camera_loaded = False # Reset để hiển thị lại "Đang tải..."
+        print(f"Đã chuyển sang camera: {new_camera_name}")
 
     def show_video_view(self):
         self.person_view_frame.grid_forget()
@@ -104,20 +125,21 @@ class FaceManagerApp:
         self.btn_show_cam.configure(state="normal", fg_color=ctk.ThemeManager.theme["CTkButton"]["fg_color"])
 
     def update_video_feed(self):
-        ret, frame = self.camera.read()
-        if ret:
-            if not self.camera_loaded:
-                self.video_label.configure(text="")
-                self.camera_loaded = True
+        if self.camera:
+            ret, frame = self.camera.read()
+            if ret:
+                if not self.camera_loaded:
+                    self.video_label.configure(text="")
+                    self.camera_loaded = True
 
-            frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-            pil_image = Image.fromarray(frame_rgb)
-            
-            ctk_image = ctk.CTkImage(pil_image, size=self.video_feed_size)
-            
-            if self.video_label.winfo_exists():
-                self.video_label.configure(image=ctk_image)
-                self.video_label.image = ctk_image
+                frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                pil_image = Image.fromarray(frame_rgb)
+                
+                ctk_image = ctk.CTkImage(pil_image, size=self.video_feed_size)
+                
+                if self.video_label.winfo_exists():
+                    self.video_label.configure(image=ctk_image)
+                    self.video_label.image = ctk_image
         
         self.root.after(15, self.update_video_feed)
 

@@ -1,15 +1,24 @@
 # video_recorder.py
-import cv2, time, uuid, os, subprocess
-from config import TMP_DIR, RECORD_SECONDS, VIDEO_PREVIEW_LIMIT_MB, HTTPX_TIMEOUT, TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, FFMPEG_TIMEOUT, RECORDER_FPS, RECORDER_FOURCC
-import httpx
-from shutil import which
+import os
+import subprocess
 import threading
+import time
+import uuid
+from shutil import which
 
-def file_size_mb(p): 
-    try: return os.path.getsize(p)/(1024*1024)
+import cv2
+import httpx
+
+from config import (FFMPEG_TIMEOUT, HTTPX_TIMEOUT, RECORDER_FPS,
+                    RECORDER_FOURCC, TELEGRAM_CHAT_ID, TELEGRAM_TOKEN,
+                    VIDEO_PREVIEW_LIMIT_MB)
+
+def file_size_mb(p):
+    try: return os.path.getsize(p) / (1024 * 1024)
     except: return 0.0
 
 def try_compress_ffmpeg(inp):
+    """Nén video bằng ffmpeg nếu có thể."""
     ff = which("ffmpeg")
     if not ff: return None
     out = inp.replace(".mp4", f"_cmp_{uuid.uuid4().hex}.mp4")
@@ -17,7 +26,7 @@ def try_compress_ffmpeg(inp):
     try:
         subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=FFMPEG_TIMEOUT)
         return out if os.path.exists(out) else None
-    except Exception as e:
+    except Exception:
         if os.path.exists(out): os.remove(out)
         return None
 
@@ -25,37 +34,38 @@ def send_photo(token, chat_id, image_path, caption=""):
     url = f"https://api.telegram.org/bot{token}/sendPhoto"
     try:
         with open(image_path, "rb") as f:
-            r = httpx.post(url, data={"chat_id":chat_id, "caption":caption}, files={"photo":f}, timeout=HTTPX_TIMEOUT)
+            r = httpx.post(url, data={"chat_id": chat_id, "caption": caption}, files={"photo": f}, timeout=HTTPX_TIMEOUT)
             return r.is_success
     except Exception as e:
-        print("send_photo error", e)
+        print(f"send_photo error: {e}")
         return False
 
 def send_video_or_document(token, chat_id, video_path, caption=""):
+    """Gửi video, tự động nén và gửi dưới dạng document nếu file quá lớn."""
     url_base = f"https://api.telegram.org/bot{token}"
-    size = file_size_mb(video_path)
-    if size <= VIDEO_PREVIEW_LIMIT_MB:
+    if file_size_mb(video_path) <= VIDEO_PREVIEW_LIMIT_MB:
         try:
             with open(video_path, "rb") as f:
-                r = httpx.post(f"{url_base}/sendVideo", data={"chat_id":chat_id, "caption":caption}, files={"video":f}, timeout=HTTPX_TIMEOUT)
+                r = httpx.post(f"{url_base}/sendVideo", data={"chat_id": chat_id, "caption": caption}, files={"video": f}, timeout=HTTPX_TIMEOUT)
                 return r.is_success
         except Exception as e:
-            print("sendVideo error", e)
+            print(f"sendVideo error: {e}")
+
     cmp = try_compress_ffmpeg(video_path)
     try_path = cmp if cmp else video_path
     try:
         with open(try_path, "rb") as f:
-            r = httpx.post(f"{url_base}/sendDocument", data={"chat_id":chat_id, "caption":caption}, files={"document":(os.path.basename(try_path), f)}, timeout=HTTPX_TIMEOUT)
-            ok = r.is_success
+            r = httpx.post(f"{url_base}/sendDocument", data={"chat_id": chat_id, "caption": caption}, files={"document": (os.path.basename(try_path), f)}, timeout=HTTPX_TIMEOUT)
+            return r.is_success
     except Exception as e:
-        print("sendDocument error", e)
-        ok = False
+        print(f"sendDocument error: {e}")
+        return False
     finally:
         if cmp and os.path.exists(cmp):
             os.remove(cmp)
-    return ok
 
 class Recorder:
+    """Lớp quản lý việc ghi video từ các khung hình (frame)."""
     def __init__(self, out_dir="tmp", fps=RECORDER_FPS, fourcc_str=RECORDER_FOURCC):
         self.out_dir = out_dir
         os.makedirs(self.out_dir, exist_ok=True)
@@ -64,10 +74,9 @@ class Recorder:
         self._lock = threading.Lock()
         self.current = None
 
-    # <--- THAY ĐỔI: Thêm tham số wait_for_user --->
     def start(self, reason="alert", duration=60, wait_for_user=False):
-        got = self._lock.acquire(timeout=0.3)
-        if not got:
+        """Bắt đầu một phiên ghi hình mới."""
+        if not self._lock.acquire(timeout=0.3):
             print("Recorder.start: lock busy -> returning None")
             return None
         try:
@@ -77,29 +86,25 @@ class Recorder:
             fname = f"rec_{reason}_{int(time.time())}_{uuid.uuid4().hex[:8]}.mp4"
             path = os.path.join(self.out_dir, fname)
             rec = {
-                "path": path,
-                "writer": None,
-                "end_time": time.time() + float(duration),
-                "meta": {"reason": reason},
-                "alert_ids": [],
-                "wait_for_user": wait_for_user, # <--- THAY ĐỔI: Lưu trạng thái chờ
+                "path": path, "writer": None, "end_time": time.time() + float(duration),
+                "meta": {"reason": reason}, "alert_ids": [], "wait_for_user": wait_for_user,
             }
             self.current = rec
-            print(f"Recorder.start: created record meta (wait_for_user={wait_for_user}):", path)
+            print(f"Recorder.start: created record meta (wait_for_user={wait_for_user}): {path}")
             return rec
         finally:
-            try: self._lock.release()
-            except RuntimeError: pass
+            self._lock.release()
 
     def extend(self, extra_seconds):
+        """Kéo dài thời gian ghi hình của phiên hiện tại."""
         with self._lock:
             if self.current is None:
                 raise RuntimeError("No active recorder to extend")
             self.current["end_time"] += float(extra_seconds)
-            print(f"Recorder.extend: extended by {extra_seconds}s, new end_time:", self.current["end_time"])
-            return self.current["end_time"]
+            print(f"Recorder.extend: extended by {extra_seconds}s")
 
     def write(self, frame):
+        """Ghi một khung hình vào video."""
         with self._lock:
             rec = self.current
             if rec is None: return False
@@ -108,69 +113,55 @@ class Recorder:
                 try:
                     writer = cv2.VideoWriter(rec["path"], self.fourcc, self.fps, (w, h))
                     if not writer.isOpened():
-                        print("Recorder.write: VideoWriter failed to open", rec["path"])
                         self.current = None
                         return False
                     rec["writer"] = writer
-                    print("Recorder.write: opened writer:", rec["path"], "frame size:", (w,h))
                 except Exception as e:
-                    print("Recorder.write: failed to open writer:", e)
+                    print(f"Recorder.write: failed to open writer: {e}")
                     self.current = None
                     return False
-            writer = rec["writer"]
         try:
-            writer.write(frame)
+            rec["writer"].write(frame)
         except Exception as e:
-            print("Recorder.write: exception writing frame:", e)
+            print(f"Recorder.write: exception writing frame: {e}")
             return False
         return True
 
     def check_and_finalize(self):
+        """Kiểm tra nếu hết thời gian ghi hình và hoàn tất file video."""
         with self._lock:
             rec = self.current
             if rec is None: return None
-            if time.time() < rec["end_time"]: return None
-
-            # <--- THAY ĐỔI: Logic "Grace Period" --->
-            # Nếu hết giờ nhưng vẫn đang trong trạng thái chờ người dùng, KHÔNG hoàn tất.
-            if rec.get("wait_for_user", False):
+            # Nếu hết giờ nhưng đang chờ người dùng, không hoàn tất
+            if time.time() < rec["end_time"] or rec.get("wait_for_user", False):
                 return None
-
-            writer = rec.get("writer")
-            path = rec.get("path")
-            alert_ids = list(rec.get("alert_ids", []))
-            meta = rec.get("meta", {})
             self.current = None
-        try:
-            if writer: writer.release()
-        except Exception as e:
-            print("Recorder.check_and_finalize: error releasing writer:", e)
-        print("Recorder.check_and_finalize: finalized", path, "alerts:", alert_ids)
-        return {"path": path, "alert_ids": alert_ids, "meta": meta}
 
-    # <--- THAY ĐỔI: Hàm mới để "mở khóa" recorder --->
+        try:
+            if rec.get("writer"): rec["writer"].release()
+        except Exception as e:
+            print(f"Recorder.check_and_finalize: error releasing writer: {e}")
+        print(f"Recorder.check_and_finalize: finalized {rec.get('path')}")
+        return rec
+
     def resolve_user_wait(self):
-        """Báo hiệu rằng thời gian chờ người dùng đã kết thúc (do có phản hồi hoặc hết giờ)."""
+        """Báo hiệu rằng thời gian chờ người dùng đã kết thúc để recorder có thể hoàn tất."""
         with self._lock:
-            if self.current:
-                if self.current.get("wait_for_user", False):
-                    print("Recorder.resolve_user_wait: Đã mở khóa chờ người dùng.")
-                    self.current["wait_for_user"] = False
-                
+            if self.current and self.current.get("wait_for_user", False):
+                print("Recorder.resolve_user_wait: Đã mở khóa chờ người dùng.")
+                self.current["wait_for_user"] = False
+
     def stop_and_discard(self):
+        """Dừng ghi hình và xóa file video đang ghi."""
         with self._lock:
             rec = self.current
             if not rec: return False
-            writer = rec.get("writer")
-            path = rec.get("path")
             self.current = None
         try:
-            if writer: writer.release()
-        except Exception: pass
-        try:
-            if path and os.path.exists(path):
-                os.remove(path)
-                print("Recorder.stop_and_discard: removed", path)
+            if rec.get("writer"): rec["writer"].release()
+            if rec.get("path") and os.path.exists(rec["path"]):
+                os.remove(rec["path"])
+                print(f"Recorder.stop_and_discard: removed {rec['path']}")
         except Exception as e:
-            print("Recorder.stop_and_discard: failed to remove file:", e)
+            print(f"Recorder.stop_and_discard: failed to remove file: {e}")
         return True
