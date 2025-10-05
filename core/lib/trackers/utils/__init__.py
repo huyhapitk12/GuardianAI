@@ -1,4 +1,4 @@
-from Lib.trackers.utils.sort_utils import (
+from core.lib.trackers.utils.sort_utils import (
     get_alive_trackers,
     get_iou_matrix,
     update_detections_with_track_ids,

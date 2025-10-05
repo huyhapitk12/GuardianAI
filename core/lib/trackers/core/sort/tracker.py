@@ -2,9 +2,9 @@ import numpy as np
 import supervision as sv
 from scipy.optimize import linear_sum_assignment
 
-from Lib.trackers.core.base import BaseTracker
-from Lib.trackers.core.sort.kalman_box_tracker import SORTKalmanBoxTracker
-from Lib.trackers.utils.sort_utils import (
+from core.lib.trackers.core.base import BaseTracker
+from core.lib.trackers.core.sort.kalman_box_tracker import SORTKalmanBoxTracker
+from core.lib.trackers.utils.sort_utils import (
     get_alive_trackers,
     get_iou_matrix,
     update_detections_with_track_ids,

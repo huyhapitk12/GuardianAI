@@ -1,5 +1,5 @@
-from Lib.trackers.core.sort.tracker import SORTTracker
-from Lib.trackers.log import get_logger
+from core.lib.trackers.core.sort.tracker import SORTTracker
+from core.lib.trackers.log import get_logger
 
 __all__ = ["SORTTracker"]
 

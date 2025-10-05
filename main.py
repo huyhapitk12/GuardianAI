@@ -1,196 +1,456 @@
-# main.py
+"""
+Guardian Security System - Main Application
+Refactored and cleaned version
+"""
 import logging
-import os
-import queue
 import threading
 import time
 import uuid
-from functools import partial
-
+import queue
 import cv2
-import customtkinter as ctk
-from telegram import InlineKeyboardButton, InlineKeyboardMarkup
 
-from alarm_player import init_alarm, play_alarm
-from config import (IP_CAMERAS, RECORD_SECONDS, STRANGER_CLIP_DURATION,
-                    TELEGRAM_CHAT_ID, TELEGRAM_TOKEN, TMP_DIR,
-                    USER_RESPONSE_WINDOW_SECONDS)
-from detection_core import Camera
-from gui_manager import FaceManagerApp
-from shared_state import guard, recorder, response_queue, state
-import shared_state
-from telegram_bot import (add_system_message_to_history, run_bot,
-                          schedule_send_alert)
-from video_recorder import send_photo, send_video_or_document
+# Configuration
+from config import settings
+from config import (
+    RECORD_SECONDS,
+    USER_RESPONSE_WINDOW_SECONDS,
+    STRANGER_CLIP_DURATION,
+    AlertType
+)
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(message)s")
+# Core modules
+from core import Camera
+from core import Recorder
+from core import FaceDetector, FireDetector, PersonTracker
+
+# Utilities
+from utils import StateManager, SpamGuard, init_alarm, play_alarm, stop_alarm
+
+# Telegram
+from bot import GuardianBot, AIAssistant
+
+# GUI
+from gui import run_gui
+
+# Telegram helpers
+from bot import send_photo, send_video_or_document
+
+# Setup logging
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+)
 logging.getLogger("ultralytics").setLevel(logging.ERROR)
-log = logging.getLogger("guardian")
+logger = logging.getLogger(__name__)
 
-def fire_alert_watcher(alert_id):
-    """Theo dõi cảnh báo cháy, nếu không có phản hồi sau một thời gian sẽ tự bật còi."""
-    log.info(f"Bắt đầu theo dõi cảnh báo cháy ID: {alert_id} trong {USER_RESPONSE_WINDOW_SECONDS} giây.")
-    time.sleep(USER_RESPONSE_WINDOW_SECONDS)
-    alert_info = state.get_alert_by_id(alert_id)
-    if alert_info and not alert_info.get('resolved', False):
-        log.warning(f"Không có phản hồi cho cảnh báo cháy {alert_id}. KÍCH HOẠT CÒI BÁO ĐỘNG!")
-        play_alarm()
-
-def _on_alert(frame, reason, name, meta, camera_name="Unknown"):
-    """Callback được gọi khi có một sự kiện cảnh báo từ detection_core."""
-    alert_key = (reason, name) if reason == "nguoi_quen" else ("lua_chay" if "lua_chay" in reason else reason)
-
-    if state.has_unresolved_alert(alert_key):
-        log.info(f"Bỏ qua cảnh báo '{alert_key}' vì đã có cảnh báo khác đang chờ.")
-        return
-    if not guard.allow(alert_key):
-        log.info(f"Bỏ qua cảnh báo '{alert_key}' để tránh spam.")
-        return
-
-    log.info(f">>> CẢNH BÁO MỚI: {alert_key} từ camera {camera_name}")
-    img_path = os.path.join(TMP_DIR, f"alert_{reason}_{uuid.uuid4().hex}.jpg")
-    cv2.imwrite(img_path, frame)
-    alert_id = state.create_alert(reason, TELEGRAM_CHAT_ID, asked_for=name, image_path=img_path)
-
-    # Tạo caption và nút bấm
-    is_fire_alert = "lua_chay" in reason
-    caption = ""
-    if reason == "nguoi_la":
-        caption = f"⚠️ [{camera_name}] Phát hiện người lạ\n\nBạn có nhận ra người này không? (có/không)"
-    elif reason == "nguoi_quen":
-        caption = f"👋 [{camera_name}] Phát hiện {name}\n\nBạn có nhận ra người này không? (có/không)"
-    elif reason == "lua_chay_nghi_ngo":
-        caption = f"🟡 [{camera_name}] CẢNH BÁO VÀNG: Nghi ngờ có cháy. Vui lòng xác nhận."
-    elif reason == "lua_chay_khan_cap":
-        caption = f"🔴 [{camera_name}] CẢNH BÁO ĐỎ: Phát hiện đám cháy. Yêu cầu kiểm tra ngay!"
-
-    if is_fire_alert:
-        keyboard = [[InlineKeyboardButton("✅ Cháy thật", callback_data=f"fire_real:{alert_id}"),
-                     InlineKeyboardButton("❌ Báo động giả", callback_data=f"fire_false:{alert_id}")],
-                    [InlineKeyboardButton("📞 Gọi PCCC (114)", callback_data=f"fire_call:{alert_id}")]]
-        schedule_send_alert(TELEGRAM_CHAT_ID, img_path, caption, InlineKeyboardMarkup(keyboard))
-        if reason == "lua_chay_khan_cap":
-            threading.Thread(target=fire_alert_watcher, args=(alert_id,), daemon=True).start()
-    else:
-        threading.Thread(target=lambda: send_photo(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, img_path, caption), daemon=True).start()
-
-    add_system_message_to_history(TELEGRAM_CHAT_ID, caption)
-
-    # Bắt đầu ghi hình và các tác vụ khác
-    if reason == "nguoi_la":
-        start_clip_for_alert(shared_state.active_cameras.get(camera_name), frame, alert_id, duration=STRANGER_CLIP_DURATION)
-
-    rec = recorder.start(reason=reason, duration=RECORD_SECONDS, wait_for_user=(reason == "nguoi_quen"))
-    if rec:
-        rec.setdefault("alert_ids", []).append(alert_id)
-        log.info(f"Đã bắt đầu ghi hình mới cho cảnh báo {alert_id} -> {rec.get('path')}")
-    else: # Nếu recorder bận, thử đính kèm vào bản ghi hiện tại
-        if recorder.current:
-            recorder.current.setdefault("alert_ids", []).append(alert_id)
-            recorder.extend(RECORD_SECONDS)
-            log.info(f"Đã đính kèm cảnh báo {alert_id} vào bản ghi hiện tại và kéo dài thời gian.")
-
-    if not is_fire_alert:
-        threading.Thread(target=user_response_watcher, args=(alert_id,), daemon=True).start()
-
-def user_response_watcher(alert_id):
-    """Theo dõi phản hồi của người dùng cho cảnh báo người quen/lạ."""
-    try:
-        resp = response_queue.get(timeout=USER_RESPONSE_WINDOW_SECONDS)
-        if resp and resp.get("alert_id") == alert_id:
-            recorder.resolve_user_wait()
-            state.resolve_alert(alert_id, resp.get("raw_text"))
-            if resp.get("decision") == "yes":
-                log.info("Phản hồi an toàn -> dừng và xóa bản ghi.")
-                recorder.stop_and_discard()
+class GuardianApp:
+    """Main Guardian application"""
+    
+    def __init__(self):
+        # Initialize components
+        self.state = StateManager()
+        self.spam_guard = SpamGuard()
+        self.recorder = Recorder()
+        self.response_queue = queue.Queue()
+        
+        # Detection components
+        self.face_detector = None
+        self.fire_detector = None
+        self.person_tracker = None
+        self.camera = None
+        
+        # Telegram
+        self.bot = None
+        self.ai_assistant = None
+        
+        # Threads
+        self.threads = []
+    
+    def initialize(self) -> bool:
+        """Initialize all components"""
+        logger.info("Initializing Guardian system...")
+        
+        # Initialize alarm
+        if not init_alarm(settings.paths.alarm_sound):
+            logger.warning("Alarm initialization failed")
+        
+        # Initialize detectors
+        self.face_detector = FaceDetector()
+        if not self.face_detector.initialize():
+            logger.error("Face detector initialization failed")
+            return False
+        self.face_detector.load_known_faces()
+        
+        self.fire_detector = FireDetector()
+        if not self.fire_detector.initialize():
+            logger.error("Fire detector initialization failed")
+            return False
+        
+        self.person_tracker = PersonTracker(self.face_detector)
+        if not self.person_tracker.initialize():
+            logger.error("Person tracker initialization failed")
+            return False
+        
+        # Initialize camera
+        try:
+            self.camera = Camera(
+                source=settings.camera.source,
+                show_window=False,
+                on_person_alert=self._handle_person_alert,
+                on_fire_alert=self._handle_fire_alert
+            )
+            self.camera.start_workers(
+                self.fire_detector,
+                self.person_tracker,
+                self.face_detector
+            )
+        except Exception as e:
+            logger.error(f"Camera initialization failed: {e}")
+            return False
+        
+        # Initialize AI assistant
+        self.ai_assistant = AIAssistant()
+        
+        # Initialize Telegram bot
+        self.bot = GuardianBot(
+            self.state,
+            self.ai_assistant,
+            self.spam_guard,
+            self,  # For alarm control
+            self.response_queue,
+            self._get_camera_snapshot
+        )
+        
+        logger.info("Guardian system initialized successfully")
+        return True
+    
+    def _handle_person_alert(self, frame, alert_type: str, metadata: dict):
+        """Handle person detection alerts"""
+        # Build alert key
+        if alert_type == AlertType.KNOWN_PERSON.value:
+            alert_key = (alert_type, metadata.get('name'))
+        else:
+            alert_key = alert_type
+        
+        # Check spam guard
+        if not self.spam_guard.allow(alert_key):
+            logger.info(f"Alert blocked by spam guard: {alert_key}")
             return
-    except queue.Empty:
-        log.info(f"Không có phản hồi trong {USER_RESPONSE_WINDOW_SECONDS}s cho cảnh báo {alert_id}. Mở khóa ghi hình.")
-        recorder.resolve_user_wait()
-
-def start_clip_for_alert(cam, initial_frame, alert_id, duration=8, fps=20.0):
-    """Tạo một video clip ngắn và gửi ngay lập tức khi có cảnh báo."""
-    def worker():
-        path = os.path.join(TMP_DIR, f"clip_{alert_id[:8]}_{uuid.uuid4().hex[:8]}.mp4")
-        h, w = initial_frame.shape[:2]
+        
+        # Check for unresolved alerts
+        if self.state.has_unresolved_alert(alert_key):
+            logger.info(f"Skipping alert, already have unresolved: {alert_key}")
+            return
+        
+        # Save alert image
+        img_path = settings.paths.tmp_dir / f"alert_{alert_type}_{uuid.uuid4().hex}.jpg"
+        cv2.imwrite(str(img_path), frame)
+        
+        # Create alert
+        alert_id = self.state.create_alert(
+            alert_type=alert_type,
+            chat_id=settings.telegram.chat_id,
+            asked_for=metadata.get('name'),
+            image_path=str(img_path)
+        )
+        
+        # Prepare caption
+        if alert_type == AlertType.STRANGER.value:
+            caption = (
+                f"⚠️ Phát hiện người lạ\n\n"
+                f"Bạn có nhận ra người này không? "
+                f"(Trả lời trong {USER_RESPONSE_WINDOW_SECONDS}s: có/không)"
+            )
+        else:  # Known person
+            name = metadata.get('name', 'Unknown')
+            caption = (
+                f"👋 Phát hiện {name}\n\n"
+                f"Bạn có nhận ra người này không? "
+                f"(Trả lời trong {USER_RESPONSE_WINDOW_SECONDS}s: có/không)"
+            )
+        
+        # Send alert
+        threading.Thread(
+            target=lambda: send_photo(
+                settings.telegram.token,
+                settings.telegram.chat_id,
+                str(img_path),
+                caption
+            ),
+            daemon=True
+        ).start()
+        
+        self.ai_assistant.add_system_message(settings.telegram.chat_id, caption)
+        
+        # Start short clip for stranger
+        if alert_type == AlertType.STRANGER.value:
+            self._start_alert_clip(frame, alert_id, STRANGER_CLIP_DURATION)
+        
+        # Start recording
+        wait_for_user = (alert_type == AlertType.KNOWN_PERSON.value)
+        self._start_recording(alert_id, RECORD_SECONDS, wait_for_user)
+        
+        # Start response watcher
+        if alert_type != AlertType.FIRE_CRITICAL.value:
+            threading.Thread(
+                target=self._watch_for_response,
+                args=(alert_id,),
+                daemon=True
+            ).start()
+    
+    def _handle_fire_alert(self, frame, alert_type: str):
+        """Handle fire detection alerts"""
+        alert_key = "lua_chay"
+        
+        if not self.spam_guard.allow(alert_key):
+            logger.info("Fire alert blocked by spam guard")
+            return
+        
+        if self.state.has_unresolved_alert(alert_key):
+            logger.info("Skipping fire alert, already have unresolved")
+            return
+        
+        # Save alert image
+        img_path = settings.paths.tmp_dir / f"alert_{alert_type}_{uuid.uuid4().hex}.jpg"
+        cv2.imwrite(str(img_path), frame)
+        
+        # Create alert
+        alert_id = self.state.create_alert(
+            alert_type=alert_type,
+            chat_id=settings.telegram.chat_id,
+            image_path=str(img_path)
+        )
+        
+        # Prepare caption
+        if alert_type == AlertType.FIRE_CRITICAL.value:
+            caption = (
+                "🔴 CẢNH BÁO ĐỎ KHẨN CẤP: Phát hiện đám cháy đang phát triển "
+                "hoặc có cả lửa và khói. Yêu cầu kiểm tra ngay lập tức!"
+            )
+        else:  # Warning
+            caption = (
+                "🟡 CẢNH BÁO VÀNG: Phát hiện dấu hiệu nghi ngờ cháy. "
+                "Vui lòng kiểm tra hình ảnh và xác nhận."
+            )
+        
+        # Send with buttons
+        self.bot.schedule_alert(
+            settings.telegram.chat_id,
+            str(img_path),
+            caption,
+            alert_id
+        )
+        
+        self.ai_assistant.add_system_message(settings.telegram.chat_id, caption)
+        
+        # Start fire alert watcher for critical alerts
+        if alert_type == AlertType.FIRE_CRITICAL.value:
+            threading.Thread(
+                target=self._watch_fire_alert,
+                args=(alert_id,),
+                daemon=True
+            ).start()
+    
+    def _watch_for_response(self, alert_id: str):
+        """Watch for user response to alert"""
+        start = time.time()
+        
+        while time.time() - start < USER_RESPONSE_WINDOW_SECONDS:
+            try:
+                resp = self.response_queue.get(timeout=1.0)
+            except queue.Empty:
+                continue
+            
+            if resp and resp.get("alert_id") == alert_id:
+                decision = resp.get("decision")
+                
+                self.recorder.resolve_user_wait()
+                
+                if decision in ("yes", "left"):
+                    logger.info("Safe response - stopping and discarding recording")
+                    self.recorder.stop_and_discard()
+                else:
+                    logger.info("Unsafe/unclear response - continue recording")
+                
+                return
+        
+        logger.info(f"No response for alert {alert_id}, resolving user wait")
+        self.recorder.resolve_user_wait()
+    
+    def _watch_fire_alert(self, alert_id: str):
+        """Watch fire alert and activate alarm if no response"""
+        time.sleep(USER_RESPONSE_WINDOW_SECONDS)
+        
+        alert_info = self.state.get_alert_by_id(alert_id)
+        if alert_info and not alert_info.resolved:
+            logger.warning(f"No response to fire alert {alert_id}, ACTIVATING ALARM!")
+            play_alarm()
+    
+    def _start_alert_clip(self, initial_frame, alert_id: str, duration: int):
+        """Start recording a short clip for alert"""
+        def worker():
+            path = settings.paths.tmp_dir / f"clip_{alert_id[:8]}_{uuid.uuid4().hex[:8]}.mp4"
+            
+            try:
+                h, w = initial_frame.shape[:2]
+                fourcc = cv2.VideoWriter.fourcc(*"mp4v")
+                writer = cv2.VideoWriter(str(path), fourcc, 20.0, (w, h))
+                
+                if not writer.isOpened():
+                    logger.error("Failed to create clip writer")
+                    return
+                
+                writer.write(initial_frame)
+                
+                start = time.time()
+                while time.time() - start < duration:
+                    ret, frame = self.camera.read_raw()
+                    if ret and frame is not None:
+                        writer.write(frame)
+                    time.sleep(0.02)
+                
+                writer.release()
+                
+                threading.Thread(
+                    target=lambda: send_video_or_document(
+                        settings.telegram.token,
+                        settings.telegram.chat_id,
+                        str(path),
+                        "📹 Clip cảnh báo"
+                    ),
+                    daemon=True
+                ).start()
+            except Exception as e:
+                logger.error(f"Clip recording error: {e}")
+        
+        threading.Thread(target=worker, daemon=True).start()
+    
+    def _start_recording(self, alert_id: str, duration: int, wait_for_user: bool):
+        """Start video recording"""
         try:
-            writer = cv2.VideoWriter(path, cv2.VideoWriter.fourcc(*"mp4v"), float(fps), (w, h))
-            if not writer.isOpened(): return
-            t0 = time.time()
-            writer.write(initial_frame)
-            while time.time() - t0 < float(duration):
-                ret, frame = cam.read_raw() if hasattr(cam, "read_raw") else cam.read()
-                if ret and frame is not None:
-                    if frame.shape[:2] != (h, w): frame = cv2.resize(frame, (w, h))
-                    writer.write(frame)
-                time.sleep(1/fps)
-            writer.release()
-            send_video_or_document(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, path, caption=f"📹 Clip cảnh báo")
+            rec = self.recorder.start(
+                reason="alert",
+                duration=duration,
+                wait_for_user=wait_for_user
+            )
+            if rec:
+                rec.setdefault("alert_ids", []).append(alert_id)
+                logger.info(f"Recording started for alert {alert_id}")
         except Exception as e:
-            log.exception(f"Worker tạo clip thất bại: {e}")
-    threading.Thread(target=worker, daemon=True).start()
-
-def recorder_monitor_loop(cam):
-    """Vòng lặp liên tục đọc frame và ghi vào video nếu recorder đang hoạt động."""
-    log.info("Vòng lặp giám sát ghi hình đã bắt đầu.")
-    while not getattr(cam, "quit", False):
-        ret, frame = cam.read_raw() if hasattr(cam, "read_raw") else cam.read()
-        if not ret or frame is None:
-            time.sleep(0.05)
-            continue
+            logger.error(f"Failed to start recording: {e}")
+    
+    def _recorder_monitor_loop(self):
+        """Monitor recorder and finalize recordings"""
+        while not self.camera.quit:
+            ret, frame = self.camera.read_raw()
+            if ret and frame is not None:
+                try:
+                    if self.recorder.current:
+                        self.recorder.write(frame)
+                        finalized = self.recorder.check_and_finalize()
+                        
+                        if finalized:
+                            path = finalized.get("path")
+                            logger.info(f"Recording finalized: {path}")
+                            
+                            threading.Thread(
+                                target=lambda: send_video_or_document(
+                                    settings.telegram.token,
+                                    settings.telegram.chat_id,
+                                    str(path),
+                                    "📹 Bản ghi cảnh báo"
+                                ),
+                                daemon=True
+                            ).start()
+                except Exception as e:
+                    logger.error(f"Recorder monitor error: {e}")
+            
+            time.sleep(0.02)
+    
+    def _get_camera_snapshot(self, chat_id: str):
+        """Get and send camera snapshot"""
         try:
-            if recorder.current:
-                recorder.write(frame)
-                finalized = recorder.check_and_finalize()
-                if finalized:
-                    path = finalized.get("path")
-                    log.info(f"Bản ghi đã hoàn tất: {path}")
-                    threading.Thread(target=lambda p=path: send_video_or_document(TELEGRAM_TOKEN, TELEGRAM_CHAT_ID, p, caption='📹 Bản ghi cảnh báo'), daemon=True).start()
+            ret, frame = self.camera.read_raw()
+            if not ret or frame is None:
+                logger.error("Failed to get camera snapshot")
+                return
+            
+            img_path = settings.paths.tmp_dir / f"snapshot_{uuid.uuid4().hex}.jpg"
+            cv2.imwrite(str(img_path), frame)
+            
+            threading.Thread(
+                target=lambda: send_photo(
+                    settings.telegram.token,
+                    chat_id,
+                    str(img_path),
+                    "📸 Ảnh chụp nhanh từ camera"
+                ),
+                daemon=True
+            ).start()
         except Exception as e:
-            log.exception(f"Lỗi trong quá trình ghi/hoàn tất bản ghi: {e}")
-        time.sleep(0.02)
+            logger.error(f"Snapshot error: {e}")
+    
+    # Alarm control methods (for bot)
+    def play(self):
+        """Play alarm"""
+        play_alarm()
+    
+    def stop(self):
+        """Stop alarm"""
+        stop_alarm()
+    
+    def run(self):
+        """Run the application"""
+        if not self.initialize():
+            logger.error("Initialization failed")
+            return
+        
+        # Start Telegram bot thread
+        bot_thread = threading.Thread(target=self.bot.run, daemon=True)
+        bot_thread.start()
+        self.threads.append(bot_thread)
+        logger.info("Telegram bot thread started")
+        
+        # Start GUI thread
+        gui_thread = threading.Thread(
+            target=run_gui,
+            args=(self.camera, self.face_detector, self.state),
+            daemon=True
+        )
+        gui_thread.start()
+        self.threads.append(gui_thread)
+        logger.info("GUI thread started")
+        
+        # Start recorder monitor thread
+        recorder_thread = threading.Thread(
+            target=self._recorder_monitor_loop,
+            daemon=True
+        )
+        recorder_thread.start()
+        self.threads.append(recorder_thread)
+        logger.info("Recorder monitor thread started")
+        
+        # Run camera processing (blocks)
+        try:
+            self.camera.process_frames(self.state)
+        except KeyboardInterrupt:
+            logger.info("Interrupted by user, shutting down...")
+        except Exception as e:
+            logger.error(f"Camera processing error: {e}")
+        finally:
+            self.shutdown()
+    
+    def shutdown(self):
+        """Shutdown the application"""
+        logger.info("Shutting down Guardian...")
+        if self.camera:
+            self.camera.release()
+        logger.info("Shutdown complete")
 
-def run_gui(cam_instance):
-    """Khởi chạy giao diện đồ họa trong luồng riêng."""
-    root = ctk.CTk()
-    FaceManagerApp(root, cam_instance)
-    root.mainloop()
+def main():
+    """Main entry point"""
+    app = GuardianApp()
+    app.run()
 
 if __name__ == "__main__":
-    init_alarm()
-    threading.Thread(target=run_bot, daemon=True).start()
-    log.info("Luồng Telegram bot đã bắt đầu.")
-
-    camera_threads = []
-    for name, src in IP_CAMERAS.items():
-        try:
-            log.info(f"Đang khởi tạo camera: {name} (Nguồn: {src})")
-            cam = Camera(src, show_window=False)
-            shared_state.active_cameras[name] = cam
-            cam.on_alert_callback = partial(_on_alert, camera_name=name)
-            thread = threading.Thread(target=cam.detect, name=f"CamThread-{name}", daemon=True)
-            thread.start()
-            camera_threads.append(thread)
-            log.info(f"Đã bắt đầu luồng cho camera '{name}'.")
-        except Exception as e:
-            log.exception(f"Không thể bắt đầu camera '{name}': {e}")
-
-    if shared_state.active_cameras:
-        main_cam_instance = list(shared_state.active_cameras.values())[0]
-        threading.Thread(target=run_gui, args=(main_cam_instance,), daemon=True).start()
-        log.info("Luồng giao diện đồ họa (GUI) đã bắt đầu.")
-        threading.Thread(target=recorder_monitor_loop, args=(main_cam_instance,), daemon=True).start()
-    else:
-        log.error("Không có camera nào được khởi tạo thành công. Thoát chương trình.")
-        exit()
-
-    try:
-        while any(t.is_alive() for t in camera_threads):
-            time.sleep(10)
-        log.warning("Tất cả các luồng camera đã dừng. Thoát chương trình chính.")
-    except KeyboardInterrupt:
-        log.info("Bị ngắt bởi người dùng, đang thoát...")
-    finally:
-        for cam in shared_state.active_cameras.values():
-            if hasattr(cam, 'delete'): cam.delete()
-        log.info("Chương trình chính đã thoát.")
+    main()
