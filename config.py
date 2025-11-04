@@ -2,8 +2,8 @@
 import os
 
 # ===================== Telegram Settings =====================
-TELEGRAM_TOKEN = "7874716410:AAFKDHbXiyeaZZzaJGyA2_Qr6r-5mxf3K-g"
-TELEGRAM_CHAT_ID = "-4901296113"  # group chat id
+TELEGRAM_TOKEN = 
+TELEGRAM_CHAT_ID = 
 
 # ===================== Paths & Models =====================
 BASE_DIR = os.path.dirname(__file__)
@@ -75,8 +75,6 @@ USER_RESPONSE_WINDOW_SECONDS = 30   # Thời gian chờ người dùng phản h�
 API_BASE = None
 API_KEY = None
 AI_ENABLED = False
-if API_KEY:
-    AI_ENABLED = True
 AI_MODEL = None
 AI_MAX_TOKENS = 512
 AI_TEMPERATURE = 0.5
@@ -86,7 +84,7 @@ SPAM_GUARD_MIN_INTERVAL = 10        # Khoảng cách tối thiểu giữa 2 cả
 SPAM_GUARD_MAX_PER_MINUTE = 4       # Số cảnh báo tối đa trong 1 phút
 
 # ===================== IP Camera Settings =====================
-IP_CAMERA_URL = 0
+IP_CAMERA_URL = 
 # Tự động kết nối lại camera khi mất kết nối
 CAMERA_AUTO_RECONNECT = True          # Bật/tắt tự động kết nối lại
 CAMERA_RECONNECT_INTERVAL = 5.0        # Khoảng thời gian (giây) giữa các lần thử kết nối lại
