@@ -1,0 +1,35 @@
+# Environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.qodo/
+
+# IDE / Editor specific files
+.idea/           # PyCharm
+.vscode/         # Visual Studio Code
+.directory
+.DS_Store        # macOS
+Thumbs.db        # Windows
+*.swp            # Vim
+
+# Secrets files
+*.env.*.local
+secrets.yml
+
+# Python specific files
+*.pyc
+*.pyo
+t.py
+
+# Cache files
+known_embeddings.pkl
+known_names.pkl
+tmp/
+kernel.errors.txt
+Data/Image - Copy/
+Data/Image/
+Data/Model/
