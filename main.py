@@ -1,5 +1,7 @@
-# main.py
 import os
+import warnings
+# Suppress pkg_resources deprecation warning from dependencies
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
 import threading
 import time
 import uuid

@@ -539,7 +539,7 @@ class PerformanceMonitor:
                 cpu = psutil.cpu_percent()
                 mem = psutil.virtual_memory().percent
                 if cpu > 80: print(f"WARNING: High CPU: {cpu:.1f}%")
-                if mem > 85: print(f"WARNING: High memory: {mem:.1f}%")
+                if mem > 90: print(f"WARNING: High memory: {mem:.1f}%")
             except: pass
             time.sleep(interval)
     

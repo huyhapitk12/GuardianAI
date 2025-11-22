@@ -263,8 +263,9 @@ class GalleryPanel(CTkFrame):
         self.playing = False
         self.temp_vid = None
         self.stop_evt = threading.Event()
-        self.current_image = None  # Keep reference to prevent garbage collection
-        
+        self.current_image = None
+        self.current_frame = 0  # Track video position
+
         # List
         lp = CTkFrame(self, fg_color=Colors.BG_SECONDARY, corner_radius=Sizes.CORNER_RADIUS)
         lp.grid(row=0, column=0, sticky="nsew", padx=(0, Sizes.PADDING_SM))
@@ -316,8 +317,23 @@ class GalleryPanel(CTkFrame):
                                 height=50, anchor="w", command=lambda x=i: self.load(x))
                 btn.pack(fill="x", pady=2)
 
+    def _safe_update_view(self, **kwargs):
+        """Safely update view, recreating widget if TclError occurs"""
+        try:
+            self.view.configure(**kwargs)
+        except Exception:
+            try:
+                # Recreate widget
+                parent = self.view.master
+                self.view.destroy()
+                self.view = CTkLabel(parent, text="", text_color=Colors.TEXT_MUTED)
+                self.view.grid(row=1, column=0, sticky="nsew", padx=Sizes.PADDING_MD)
+                self.view.configure(**kwargs)
+            except Exception:
+                pass
+
     def load(self, item):
-        self.stop()
+        self.close_video()
         self.info.configure(text=item['name'])
         # Clean up any existing image reference when loading new item
         if hasattr(self.view, '_image_ref'):
@@ -334,7 +350,7 @@ class GalleryPanel(CTkFrame):
     def _show_img(self, path):
         img = security_manager.decrypt_image(path)
         if img is None: 
-            self.view.configure(text="Decryption failed", image=None)
+            self._safe_update_view(text="Decryption failed", image=None)
             return
         
         img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -345,19 +361,24 @@ class GalleryPanel(CTkFrame):
         
         # Store reference to prevent garbage collection
         setattr(self.view, '_image_ref', ctk_img)
-        self.view.configure(image=ctk_img, text="")
+        self._safe_update_view(image=ctk_img, text="")
 
     def _prep_vid(self, path):
-        self.view.configure(image=None, text="Loading...")
-        self.update()
+        self._safe_update_view(image=None, text="Loading...")
+        self.current_frame = 0 # Reset position for new video
         try:
             data = security_manager.try_decrypt_file(path)
             if not data: 
-                self.view.configure(text="Decryption failed")
+                self._safe_update_view(text="Decryption failed")
                 return
             
             self.temp_vid = settings.paths.tmp_dir / f"temp_{uuid.uuid4().hex}.mp4"
             with open(self.temp_vid, 'wb') as f: f.write(data)
+            
+            # Explicitly free memory
+            del data
+            import gc
+            gc.collect()
             
             cap = cv2.VideoCapture(str(self.temp_vid))
             ret, frame = cap.read()
@@ -368,60 +389,90 @@ class GalleryPanel(CTkFrame):
                 pil.thumbnail((640, 480))
                 ctk_img = CTkImage(pil, size=pil.size)
                 
-                # Store reference using setattr to prevent garbage collection
-                # This ensures the image stays alive as long as the widget exists
                 setattr(self.view, '_image_ref', ctk_img)
-                self.view.configure(image=ctk_img, text="")
+                self._safe_update_view(image=ctk_img, text="")
             else:
-                self.view.configure(text="Failed to load video frame")
+                self._safe_update_view(text="Failed to load video frame")
         except Exception as e: 
             print(f"Video prep error: {e}")
-            # Use a safe fallback for error display
             try:
-                self.view.configure(text=f"Error loading video", image=None)
+                self._safe_update_view(text=f"Error loading video", image=None)
             except:
-                pass  # Widget might be destroyed
+                pass
 
     def toggle_play(self):
         if self.playing: self.stop()
         else:
             if self.temp_vid and self.temp_vid.exists():
                 self.playing = True
-                self.play_btn.configure(text="⏹ Stop")
+                self.play_btn.configure(text="⏸ Pause")
                 self.stop_evt.clear()
                 threading.Thread(target=self._loop, daemon=True).start()
 
     def _loop(self):
         cap = cv2.VideoCapture(str(self.temp_vid))
-        while self.playing and not self.stop_evt.is_set():
+        
+        # Resume from last position
+        if self.current_frame > 0:
+            cap.set(cv2.CAP_PROP_POS_FRAMES, self.current_frame)
+        
+        def update_frame():
+            if not self.playing or self.stop_evt.is_set():
+                # Save position before releasing
+                self.current_frame = cap.get(cv2.CAP_PROP_POS_FRAMES)
+                cap.release()
+                try: self.play_btn.configure(text="▶ Resume")
+                except: pass
+                return
+
             ret, frame = cap.read()
-            if not ret: break
+            if not ret:
+                cap.release()
+                self.playing = False
+                self.current_frame = 0 # Reset when finished
+                try: self.play_btn.configure(text="▶ Play")
+                except: pass
+                return
             
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
             pil = Image.fromarray(frame)
             w, h = self.view.winfo_width(), self.view.winfo_height()
             if w>10 and h>10: pil.thumbnail((w, h))
             
-            try: self.view.configure(image=CTkImage(pil, size=pil.size))
-            except: break
-            time.sleep(1/30)
-        
-        cap.release()
-        self.playing = False
-        try: self.play_btn.configure(text="▶ Play")
-        except: pass
+            try: 
+                ctk_img = CTkImage(pil, size=pil.size)
+                self._safe_update_view(image=ctk_img)
+                setattr(self.view, '_image_ref', ctk_img)
+            except: 
+                cap.release()
+                return
+
+            self.after(33, update_frame)
+
+        self.after(0, update_frame)
 
     def stop(self):
+        """Pause playback"""
         self.playing = False
         self.stop_evt.set()
+
+    def close_video(self):
+        """Stop playback and clean up resources"""
+        self.stop()
+        self.current_frame = 0 # Reset position
+        
+        self._safe_update_view(image=None)
+
         if self.temp_vid and self.temp_vid.exists():
             try: self.temp_vid.unlink()
             except: pass
         self.temp_vid = None
-        # Clean up image reference
+        
         if hasattr(self.view, '_image_ref'):
             delattr(self.view, '_image_ref')
 
     def destroy(self):
-        self.stop()
+        self.close_video()
         super().destroy()
+
+
