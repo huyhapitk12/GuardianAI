@@ -1,0 +1,57 @@
+# Environments
+.env
+.venv
+env/
+venv/
+.qodo/
+
+# IDE / Editor specific files
+.vscode         # Visual Studio Code
+
+# Secret files
+secret.key
+
+# Python specific files
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+*.pyo
+*.pyd
+
+# AI/ML specific files and directories
+# Model files
+*.model
+*.onnx
+*.pb
+*.pt
+*.pth
+*.pkl
+*.pickle
+*.joblib
+*.h5
+*.hdf5
+*.ckpt
+*.ckpt.*
+*.safetensors
+*.bin
+*.safetensors
+
+
+# Data directories and files (excluding source data structure)
+Data/Image/*
+Data/Model/
+Data/tmp/
+
+# Cache and temporary files
+known_embeddings.pkl
+known_names.pkl
+kernel.errors.txt
+
+# Application specific files
+recordings/
+snapshots/
+screenshots/
+captures/
+exports/
+outputs/
