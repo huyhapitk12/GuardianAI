@@ -61,6 +61,14 @@ class SecurityManager:
             img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
             return img
         except Exception as e:
+            # Fallback: Try to load as regular image
+            try:
+                img = cv2.imread(str(file_path))
+                if img is not None:
+                    return img
+            except Exception:
+                pass
+            
             print(f"ERROR: Failed to decrypt image {file_path}: {e}")
             return None
 

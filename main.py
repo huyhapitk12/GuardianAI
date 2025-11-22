@@ -161,10 +161,10 @@ class GuardianApp:
         )
         
         if alert_type == AlertType.STRANGER.value:
-            caption = f"⚠️ Stranger detected at camera {source_id}"
+            caption = f"⚠️ Phát hiện người lạ tại camera {source_id}"
         else:
             name = metadata.get('name', 'Unknown')
-            caption = f"👋 {name} detected at camera {source_id}"
+            caption = f"👋 Phát hiện {name} tại camera {source_id}"
         
         if self.bot:
             self.bot.schedule_alert(
@@ -206,9 +206,9 @@ class GuardianApp:
         )
         
         if alert_type == AlertType.FIRE_CRITICAL.value:
-            caption = f"🔴 CRITICAL: Fire detected at camera {source_id}. Immediate action required!"
+            caption = f"🔴 NGUY HIỂM: Phát hiện cháy tại camera {source_id}. Cần hành động ngay!"
         else:
-            caption = f"🟡 WARNING: Suspected fire at camera {source_id}. Please verify."
+            caption = f"🟡 CẢNH BÁO: Nghi ngờ có cháy tại camera {source_id}. Vui lòng kiểm tra."
         
         if self.bot:
             self.bot.schedule_alert(
@@ -339,7 +339,7 @@ class GuardianApp:
                             task_queue.submit(
                                 self._send_video_async,
                                 str(path),
-                                "📹 Alert recording"
+                                "📹 Video cảnh báo"
                             )
                 else:
                     time.sleep(0.5)
@@ -392,7 +392,7 @@ class GuardianApp:
                     settings.telegram.token,
                     chat_id,
                     str(img_path),
-                    f"📸 Snapshot from camera {cam_source_id_for_caption}"
+                    f"📸 Ảnh chụp từ camera {cam_source_id_for_caption}"
                 ),
                 daemon=True
             ).start()

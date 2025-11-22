@@ -196,10 +196,10 @@ class AIAssistant:
         elif self.enabled: self.enabled = False
 
     async def process_message(self, chat_id: str, message: str, user_info: Optional[Dict] = None) -> Tuple[str, Optional[str]]:
-        if not self.enabled: return f"[AI Disabled] {message}", None
+        if not self.enabled: return f"[AI Đã tắt] {message}", None
         if not self.client: return self._simple_response(message), None
         try: return await self._process_with_llm(chat_id, message, user_info)
-        except Exception as e: return f"Error: {e}", None
+        except Exception as e: return f"Lỗi: {e}", None
 
     def _simple_response(self, message: str) -> str:
         msg = message.lower()
@@ -207,7 +207,7 @@ class AIAssistant:
         if any(w in msg for w in ['tắt', 'off']): return "Đã tắt. [ACTION:TOGGLE_OFF]"
         if any(w in msg for w in ['camera', 'ảnh']): return "Ảnh camera. [ACTION:GET_IMAGE]"
         if any(w in msg for w in ['báo động', 'alarm']): return "Báo động! [ACTION:ALARM_ON]"
-        return "AI unavailable."
+        return "AI không khả dụng."
 
     async def _process_with_llm(self, chat_id: str, message: str, user_info: Optional[Dict]) -> Tuple[str, Optional[str]]:
         hist = self.history.get(chat_id, [])
@@ -281,22 +281,22 @@ class TelegramHandlers:
         self.response_queue = None
 
     async def start_cmd(self, update: Update, context: Any):
-        if update.message: await update.message.reply_text("🛡️ Guardian Bot Ready. /status, /get_image, /detect")
+        if update.message: await update.message.reply_text("🛡️ Guardian Bot Sẵn sàng. /status, /get_image, /detect")
 
     async def status_cmd(self, update: Update, context: Any):
         if not update.message: return
         alerts = self.state.list_alerts()
-        status = (f"📊 *Status*\nDetect: {'🟢' if self.state.is_person_detection_enabled() else '🔴'}\n"
-                  f"Alerts: {len(alerts)}")
+        status = (f"📊 *Trạng thái*\nPhát hiện: {'🟢' if self.state.is_person_detection_enabled() else '🔴'}\n"
+                  f"Cảnh báo: {len(alerts)}")
         await update.message.reply_text(status, parse_mode='Markdown')
 
     async def toggle_detection_cmd(self, update: Update, context: Any):
         if not update.message: return
         if not context.args:
-            msg = "📸 *Cameras:*\nGlobal: " + ("🟢" if self.state.is_person_detection_enabled() else "🔴") + "\n"
+            msg = "📸 *Camera:*\nToàn cục: " + ("🟢" if self.state.is_person_detection_enabled() else "🔴") + "\n"
             for cam in self.camera_manager.cameras:
                 msg += f"Cam {cam}: {'🟢' if self.state.is_person_detection_enabled(cam) else '🔴'}\n"
-            await update.message.reply_text(msg + "\nUse /detect <id>", parse_mode='Markdown')
+            await update.message.reply_text(msg + "\nDùng /detect <id>", parse_mode='Markdown')
             return
             
         cam_id = context.args[0]
@@ -305,21 +305,21 @@ class TelegramHandlers:
             self.state.set_person_detection_enabled(new_state, cam_id)
             await update.message.reply_text(f"Cam {cam_id}: {'🟢' if new_state else '🔴'}")
         else:
-            await update.message.reply_text("❌ Invalid Camera ID")
+            await update.message.reply_text("❌ ID Camera không hợp lệ")
 
     async def get_image_cmd(self, update: Update, context: Any):
         if update.message:
             source = context.args[0] if context.args else None
-            await update.message.reply_text("📸 Capturing...")
+            await update.message.reply_text("📸 Đang chụp...")
             self.get_snapshot(str(update.message.chat_id), source)
 
     async def toggle_alarm_cmd(self, update: Update, context: Any):
         if self.alarm_player.is_alarm_playing:
             self.alarm_player.stop()
-            await update.message.reply_text("✅ Alarm stopped")
+            await update.message.reply_text("✅ Đã tắt báo động")
         else:
             self.alarm_player.play()
-            await update.message.reply_text("🚨 Alarm activated")
+            await update.message.reply_text("🚨 Đã bật báo động")
 
     async def message_listener(self, update: Update, context: Any):
         if not update.message or not update.message.text: return
@@ -351,15 +351,15 @@ class TelegramHandlers:
         if "fire" in action:
             if "real" in action: 
                 self.alarm_player.play()
-                caption += "\n✅ FIRE CONFIRMED!"
+                caption += "\n✅ XÁC NHẬN CÓ CHÁY!"
             elif "false" in action:
                 self.spam_guard.mute("lua_chay", 120)
-                caption += "\n❌ False Alarm"
+                caption += "\n❌ Báo động giả"
         elif "person" in action:
-            if "yes" in action: caption += "\n✅ Known Person"
+            if "yes" in action: caption += "\n✅ Người quen"
             elif "no" in action:
                 self.alarm_player.play()
-                caption += "\n❌ STRANGER!"
+                caption += "\n❌ NGƯỜI LẠ!"
                 
         await query.edit_message_caption(caption=caption)
 
@@ -409,7 +409,7 @@ class GuardianBot:
         if not TELEGRAM_AVAILABLE or not settings.telegram.chat_id:
             return
 
-        status_text = f"❤️ Guardian is alive.\n- Detection: {'🟢' if self.state.is_person_detection_enabled() else '🔴'}"
+        status_text = f"❤️ Guardian đang hoạt động.\n- Phát hiện: {'🟢' if self.state.is_person_detection_enabled() else '🔴'}"
         
         # This needs to run in a separate thread to not block the caller
         threading.Thread(

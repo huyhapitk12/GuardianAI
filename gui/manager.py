@@ -888,10 +888,11 @@ class ModernFaceManagerGUI:
         def rebuild_thread():
             try:
                 count = self.face_detector.rebuild_embeddings()
-                progress.set(1)
-
+                
                 def cleanup_and_show_result():
                     try:
+                        # Update progress in main thread
+                        progress.set(1)
                         if progress_dialog.winfo_exists():
                             progress_dialog.destroy()
                     except Exception as e:
@@ -907,6 +908,7 @@ class ModernFaceManagerGUI:
                 self.root.after(500, cleanup_and_show_result)
             except Exception as e:
                 logger.error("Rebuild error: %s", e)
+                error_msg = str(e)
 
                 def show_error():
                     try:
@@ -917,11 +919,12 @@ class ModernFaceManagerGUI:
 
                     CTkMessagebox(
                         title="Error",
-                        message=f"Rebuild failed: {e}",
+                        message=f"Rebuild failed: {error_msg}",
                         icon="cancel",
                     )
 
                 self.root.after(100, show_error)
+
 
         threading.Thread(target=rebuild_thread, daemon=True).start()
 
