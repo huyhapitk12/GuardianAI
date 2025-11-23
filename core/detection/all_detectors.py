@@ -23,13 +23,8 @@ except ImportError:
 
 # Local imports
 from config import settings
-try:
-    from ..lib.insightface.app import FaceAnalysis
-    from ..lib.trackers import SORTTracker
-except ImportError:
-    FaceAnalysis = None
-    SORTTracker = None
-    print("WARNING: core.lib modules not found")
+from insightface.app import FaceAnalysis
+from trackers import SORTTracker
 
 # ============================================================================
 # LOGGING HELPERS

@@ -632,26 +632,7 @@ task_queue = TaskQueue(worker_count=2)
 # REPORTING (from reporting_utils.py)
 # ============================================================================
 
-class OptimizationReporter:
-    def __init__(self, output_dir: str = "benchmark_results"):
-        self.output_dir = Path(output_dir)
-        self.output_dir.mkdir(exist_ok=True)
-        self.metrics: Dict[str, Any] = {}
-        self.start_time = time.time()
-        
-    def add_metric(self, category: str, name: str, value: Any):
-        if category not in self.metrics: self.metrics[category] = {}
-        self.metrics[category][name] = value
-        
-    def generate_report(self) -> Dict:
-        return {
-            'timestamp': datetime.now().isoformat(),
-            'duration': time.time() - self.start_time,
-            'metrics': self.metrics,
-            'system': performance_monitor.get_current_metrics()
-        }
 
-reporter = OptimizationReporter()
 
 # ============================================================================
 # MISSING DECORATORS & HELPERS
