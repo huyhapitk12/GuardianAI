@@ -1,15 +1,20 @@
 import os
 import warnings
-# Suppress pkg_resources deprecation warning from dependencies
-warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
 import threading
 import time
 import uuid
 import queue
-import cv2
-from typing import Optional
-from config import settings, AlertType
+import subprocess
+import numpy as np
+from typing import Optional, Dict, Any
 
+# Suppress pkg_resources deprecation warning from dependencies
+warnings.filterwarnings("ignore", message="pkg_resources is deprecated as an API")
+warnings.filterwarnings("ignore", message="SymbolDatabase.GetPrototype() is deprecated")
+
+from config import settings, AlertType, AlertPriority
+
+# Set environment variables for optimization
 os.environ.setdefault('OMP_NUM_THREADS', '4')
 os.environ.setdefault('MKL_NUM_THREADS', '4')
 os.environ.setdefault('TORCH_NUM_THREADS', '4')
@@ -33,12 +38,13 @@ class GuardianApp:
         self.shutdown_event = threading.Event()
         
         self.is_alarm_playing = False
-        self.face_detector = None
-        self.fire_detector = None
-        self.camera_manager = None
+        self.face_detector: Optional[FaceDetector] = None
+        self.fire_detector: Optional[FireDetector] = None
+        self.behavior_analyzer = None
+        self.camera_manager: Optional[CameraManager] = None
         
-        self.bot = None
-        self.ai_assistant = None
+        self.bot: Optional[GuardianBot] = None
+        self.ai_assistant: Optional[AIAssistant] = None
         
         self.threads = []
     
@@ -71,6 +77,22 @@ class GuardianApp:
         print("INFO: Warming up AI models...")
         self._warmup_models()
         
+        # Initialize behavior analyzer if enabled
+        if settings.get('behavior.enabled', False):
+            print("INFO: Loading anomaly detector...")
+            try:
+                from core.detection.anomaly import AnomalyDetector
+                model_path = str(settings.get('behavior.model_path'))
+                self.behavior_analyzer = AnomalyDetector(
+                    model_path=model_path,
+                    device=settings.get('behavior.device', 'cpu'),
+                    threshold=settings.get('behavior.threshold', 0.5)
+                )
+                print("INFO: Anomaly detector loaded successfully")
+            except Exception as e:
+                print(f"WARNING: Anomaly detector initialization failed: {e}")
+                self.behavior_analyzer = None
+        
         try:
             self.camera_manager = CameraManager(
                 show_windows=False,
@@ -80,7 +102,8 @@ class GuardianApp:
             self.camera_manager.start_workers(
                 self.fire_detector,
                 self.face_detector,
-                self.state
+                self.state,
+                self.behavior_analyzer
             )
         except Exception as e:
             print(f"ERROR: Camera manager initialization failed: {e}")
@@ -108,8 +131,6 @@ class GuardianApp:
     
     def _warmup_models(self):
         """Warm up AI models for better initial performance"""
-        import numpy as np
-        
         try:
             dummy_frame = np.zeros((360, 640, 3), dtype=np.uint8)
             
@@ -124,6 +145,44 @@ class GuardianApp:
             print("INFO: Model warm-up completed")
         except Exception as e:
             print(f"ERROR: Model warm-up failed: {e}")
+    
+    def _calculate_alert_priority(self, alert_type: str, metadata: Optional[dict] = None) -> AlertPriority:
+        """Calculate alert priority based on type and context"""
+        
+        # Fire alerts = CRITICAL
+        if alert_type in [AlertType.FIRE_CRITICAL.value, AlertType.FIRE_WARNING.value]:
+            return AlertPriority.CRITICAL
+        
+        # Stranger + Anomalous behavior = HIGH
+        if alert_type == AlertType.ANOMALOUS_BEHAVIOR.value:
+            return AlertPriority.HIGH
+        
+        # Stranger only = MEDIUM
+        if alert_type == AlertType.STRANGER.value:
+            return AlertPriority.MEDIUM
+        
+        # Known person = LOW
+        return AlertPriority.LOW
+    
+    def _get_priority_caption(self, alert_type: str, source_id: str, metadata: Optional[dict], priority: AlertPriority) -> str:
+        """Generate caption based on priority and alert type"""
+        
+        if priority == AlertPriority.CRITICAL:
+            if alert_type == AlertType.FIRE_CRITICAL.value:
+                return f"🚨🔥 **KHẨN CẤP** - Phát hiện lửa tại camera {source_id}\n⚠️ Cần kiểm tra ngay!"
+            else:
+                return f"🚨🔥 Cảnh báo cháy tại camera {source_id}\n⚠️ Cần kiểm tra!"
+        
+        elif priority == AlertPriority.HIGH:
+            score = metadata.get('score', 0.0) if metadata else 0.0
+            return f"⚠️🚨 **CẢNH BÁO CAO** - Hành vi bất thường tại camera {source_id}\nĐiểm số: {score:.2f}\n⚠️ Người lạ đang có hành động đáng ngờ!"
+        
+        elif priority == AlertPriority.MEDIUM:
+            return f"⚠️ Cảnh báo - Phát hiện người lạ tại camera {source_id}\n📹 Đang theo dõi..."
+        
+        else:  # LOW
+            name = metadata.get('name', 'Unknown') if metadata else 'Unknown'
+            return f"👋 Phát hiện {name} tại camera {source_id}"
     
     def _handle_person_alert(self, source_id: str, frame, alert_type: str, metadata: Optional[dict]):
         """Handle person detection alert"""
@@ -160,18 +219,20 @@ class GuardianApp:
             source_id=source_id
         )
         
-        if alert_type == AlertType.STRANGER.value:
-            caption = f"⚠️ Phát hiện người lạ tại camera {source_id}"
-        else:
-            name = metadata.get('name', 'Unknown')
-            caption = f"👋 Phát hiện {name} tại camera {source_id}"
+        # Calculate priority and generate caption
+        priority = self._calculate_alert_priority(alert_type, metadata)
+        caption = self._get_priority_caption(alert_type, source_id, metadata, priority)
+        
+        # Determine if notification should be silent (LOW priority)
+        disable_notification = (priority == AlertPriority.LOW)
         
         if self.bot:
             self.bot.schedule_alert(
                 settings.telegram.chat_id,
                 str(img_path),
                 caption,
-                alert_id
+                alert_id,
+                disable_notification=disable_notification
             )
         
         if self.ai_assistant:
@@ -259,8 +320,6 @@ class GuardianApp:
     def _compress_video(self, video_path: str) -> Optional[str]:
         """Compress video to reduce file size"""
         try:
-            import subprocess
-            
             base_path, _ = os.path.splitext(video_path)
             compressed_path = f"{base_path}_compressed.mp4"
             

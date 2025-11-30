@@ -34,136 +34,106 @@ from .styles import (
 from config.settings import settings, update_config_value
 from core.recorder import Recorder
 
-
 # ============================================================================
 # SETTINGS PANEL
 # ============================================================================
 
 class SettingsPanel(CTkFrame):
-    """Bảng cài đặt hệ thống"""
+    """Bảng cài đặt hệ thống hiện đại với Sidebar"""
 
     def __init__(self, parent, state_manager=None, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
         self.state_manager = state_manager
-
-        # Grid layout: 1 cột chính
-        self.grid_columnconfigure(0, weight=1)
-        # Row 0: Header, Row 1: Summary, Row 2: Settings List
-        self.grid_rowconfigure(2, weight=1)
-
-        self.sections: List[List[Dict[str, Any]]] = []
-
-        # Biến cho switch tổng
-        self.global_detection_var = StringVar(
-            value="on" if bool(settings.get("detection.global_enabled", True)) else "off"
-        )
-        self.global_ai_var = StringVar(
-            value="on" if bool(settings.get("ai.enabled", False)) else "off"
-        )
-
-        self._build_header()
-        self._build_summary_card()
-        self._build_body()
-        self._update_summary()
-
-    # ------------------------------------------------------------------ UI: Header & Summary
-    def _build_header(self) -> None:
-        header_frame = CTkFrame(self, fg_color="transparent")
-        header_frame.grid(row=0, column=0, sticky="ew", padx=0, pady=(0, 10))
-
-        title = CTkLabel(
-            header_frame,
-            text="⚙️ Cài đặt hệ thống",
-            font=Fonts.TITLE_SM,
-            text_color=Colors.TEXT_PRIMARY,
-        )
-        title.pack(side="top", anchor="w")
-
-        subtitle = CTkLabel(
-            header_frame,
-            text="Điều chỉnh ngưỡng phát hiện, cảnh báo và cấu hình AI.",
-            font=Fonts.SMALL,
-            text_color=Colors.TEXT_SECONDARY,
-        )
-        subtitle.pack(side="top", anchor="w")
-
-    def _build_summary_card(self) -> None:
-        card = create_card_frame(self, fg_color=Colors.BG_SECONDARY)
-        card.grid(row=1, column=0, sticky="ew", padx=0, pady=(0, 10))
         
-        card.grid_columnconfigure(0, weight=1)
-        card.grid_columnconfigure(1, weight=0) # Cột cho switch
+        # Layout: Sidebar (Left) | Content (Right)
+        self.grid_columnconfigure(0, weight=0) # Sidebar fixed width
+        self.grid_columnconfigure(1, weight=1) # Content expands
+        self.grid_rowconfigure(0, weight=1)
 
-        # Info bên trái
-        left_panel = CTkFrame(card, fg_color="transparent")
-        left_panel.grid(row=0, column=0, sticky="nsew", padx=15, pady=15)
+        self._create_sidebar()
+        self._create_content_area()
+        
+        # Select first tab by default
+        self.after(100, lambda: self._select_tab("ai_models"))
 
-        self.summary_label = CTkLabel(
-            left_panel,
-            text="",
-            font=Fonts.BODY_BOLD,
-            text_color=Colors.TEXT_PRIMARY,
-            justify="left",
-            anchor="w"
-        )
-        self.summary_label.pack(anchor="w", fill="x")
+    def _create_sidebar(self):
+        """Create sidebar with navigation buttons"""
+        self.sidebar = CTkFrame(self, fg_color=Colors.BG_SECONDARY, width=200, corner_radius=Sizes.CORNER_RADIUS)
+        self.sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, Sizes.PADDING_SM), pady=0)
+        self.sidebar.grid_propagate(False)
+        
+        CTkLabel(
+            self.sidebar, 
+            text="CÀI ĐẶT", 
+            font=Fonts.BODY_BOLD, 
+            text_color=Colors.TEXT_MUTED
+        ).pack(anchor="w", padx=Sizes.PADDING_MD, pady=(Sizes.PADDING_MD, Sizes.PADDING_SM))
 
-        hint = CTkLabel(
-            left_panel,
-            text="Sử dụng các công tắc bên phải để bật/tắt nhanh các tính năng chính.",
-            font=Fonts.SMALL,
-            text_color=Colors.TEXT_SECONDARY,
-            justify="left",
-            anchor="w"
-        )
-        hint.pack(anchor="w", fill="x", pady=(5, 0))
+        self.nav_buttons = {}
+        
+        tabs = [
+            ("ai_models", "🤖 AI & Models"),
+            ("detection", "🎯 Detection"),
+            ("security", "🛡️ Security"),
+            ("alarm", "🔊 Alarm & Sound"),
+            ("assistant", "🧠 AI Assistant"),
+        ]
+        
+        for key, text in tabs:
+            btn = create_modern_button(
+                self.sidebar,
+                text=text,
+                variant="ghost",
+                height=40,
+                anchor="w",
+                command=lambda k=key: self._select_tab(k)
+            )
+            btn.pack(fill="x", padx=Sizes.PADDING_SM, pady=2)
+            self.nav_buttons[key] = btn
 
-        # Switches bên phải
-        right_panel = CTkFrame(card, fg_color="transparent")
-        right_panel.grid(row=0, column=1, sticky="e", padx=15, pady=15)
+    def _create_content_area(self):
+        """Create area to hold settings pages"""
+        self.content = CTkFrame(self, fg_color="transparent")
+        self.content.grid(row=0, column=1, sticky="nsew")
+        self.content.grid_columnconfigure(0, weight=1)
+        self.content.grid_rowconfigure(0, weight=1)
+        
+        self.pages = {}
+        
+        # Initialize all pages
+        self.pages["ai_models"] = self._create_page_frame(self._build_models_page)
+        self.pages["detection"] = self._create_page_frame(self._build_detection_page)
+        self.pages["security"] = self._create_page_frame(self._build_security_page)
+        self.pages["alarm"] = self._create_page_frame(self._build_alarm_page)
+        self.pages["assistant"] = self._create_page_frame(self._build_assistant_page)
 
-        self.global_detection_switch = CTkSwitch(
-            right_panel,
-            text="Nhận diện người",
-            font=Fonts.BODY,
-            variable=self.global_detection_var,
-            onvalue="on",
-            offvalue="off",
-            progress_color=Colors.PRIMARY,
-            command=self._toggle_global_detection,
-        )
-        self.global_detection_switch.pack(side="left", padx=(0, 15))
+    def _create_page_frame(self, build_func):
+        """Helper to create a scrollable page frame"""
+        frame = CTkScrollableFrame(self.content, fg_color="transparent")
+        build_func(frame)
+        return frame
 
-        self.global_ai_switch = CTkSwitch(
-            right_panel,
-            text="Trợ lý AI",
-            font=Fonts.BODY,
-            variable=self.global_ai_var,
-            onvalue="on",
-            offvalue="off",
-            progress_color=Colors.PRIMARY,
-            command=self._toggle_ai_enabled,
-        )
-        self.global_ai_switch.pack(side="left")
+    def _select_tab(self, key):
+        """Switch visible page"""
+        # Update buttons style
+        for k, btn in self.nav_buttons.items():
+            if k == key:
+                btn.configure(fg_color=Colors.BG_TERTIARY, text_color=Colors.PRIMARY)
+            else:
+                btn.configure(fg_color="transparent", text_color=Colors.TEXT_PRIMARY)
+        
+        # Show selected page
+        for k, page in self.pages.items():
+            if k == key:
+                page.grid(row=0, column=0, sticky="nsew")
+            else:
+                page.grid_forget()
 
-    # ------------------------------------------------------------------ UI: Body & Sections
-    def _build_body(self) -> None:
-        self.container = CTkScrollableFrame(
-            self,
-            fg_color="transparent", # Transparent để hòa vào nền
-            corner_radius=0,
-        )
-        self.container.grid(row=2, column=0, sticky="nsew")
-        self.container.grid_columnconfigure(0, weight=1)
+    # ================= PAGE BUILDERS =================
 
-        # Tạo các nhóm cài đặt
-        self._create_models_section(self.container)
-        self._create_detection_section(self.container)
-        self._create_alarm_section(self.container)
-        self._create_ai_section(self.container)
-
-    # --- Các nhóm cài đặt (Giữ nguyên cấu trúc dữ liệu) ---
-    def _create_models_section(self, parent) -> None:
+    def _build_models_page(self, parent):
+        self._create_section_header(parent, "Cấu hình AI & Models", "Quản lý các mô hình nhận diện và xử lý ảnh.")
+        
         fields = [
             {"label": "Mô hình khuôn mặt", "key": "models.face_model_name", "type": "str", "options": ["buffalo_l", "buffalo_s"]},
             {"label": "Bộ phát hiện (Detector)", "key": "models.face.detector_name", "type": "str", "options": ["buffalo_l", "buffalo_s"]},
@@ -172,281 +142,154 @@ class SettingsPanel(CTkFrame):
             {"label": "Định dạng YOLO", "key": "models.yolo_format", "type": "str", "options": ["openvino", "onnx", "pytorch"]},
             {"label": "InsightFace Context ID", "key": "models.insightface_ctx_id", "type": "int", "min": -1, "max": 10},
         ]
-        self._create_section(parent, "🤖 Cài đặt Mô hình AI", fields)
+        self._create_settings_group(parent, "Model Selection", fields)
 
-    def _create_detection_section(self, parent) -> None:
+    def _build_detection_page(self, parent):
+        self._create_section_header(parent, "Cấu hình Detection", "Tinh chỉnh các tham số phát hiện.")
+        
         fields = [
-            {"label": "Ngưỡng nhận diện người (0.0 - 1.0)", "key": "detection.person_confidence_threshold", "type": "float", "min": 0.0, "max": 1.0},
-            {"label": "Ngưỡng phát hiện cháy (0.0 - 1.0)", "key": "detection.fire_confidence_threshold", "type": "float", "min": 0.0, "max": 1.0},
-            {"label": "Ngưỡng khớp khuôn mặt (Thấp = Chặt)", "key": "detection.face_recognition_threshold", "type": "float", "min": 0.0, "max": 2.0},
+            {"label": "Ngưỡng tin cậy (Confidence)", "key": "detection.person_confidence_threshold", "type": "float", "min": 0.0, "max": 1.0},
             {"label": "Ngưỡng IOU (Tracking)", "key": "detection.iou_threshold", "type": "float", "min": 0.0, "max": 1.0},
         ]
-        self._create_section(parent, "🎯 Cấu hình Phát hiện", fields)
+        self._create_settings_group(parent, "Thresholds", fields)
 
-    def _create_alarm_section(self, parent) -> None:
+    def _build_security_page(self, parent):
+        self._create_section_header(parent, "Bảo mật & Riêng tư", "Quản lý các tính năng an ninh.")
+        
+        card = create_card_frame(parent, fg_color=Colors.BG_SECONDARY)
+        card.pack(fill="x", pady=(0, Sizes.PADDING_MD))
+        
+        self._add_switch(card, "Phát hiện chuyển động", "security.motion_detection", "on")
+        self._add_switch(card, "Làm mờ khuôn mặt (Privacy)", "security.face_blur", "off")
+        self._add_switch(card, "Tự động khóa khi rảnh", "security.auto_lock", "on")
+        self._add_switch(card, "Xác thực 2 lớp (2FA)", "security.2fa", "off")
+        
+        # Sensitivity Slider
+        slider_frame = CTkFrame(card, fg_color="transparent")
+        slider_frame.pack(fill="x", padx=Sizes.PADDING_MD, pady=(Sizes.PADDING_MD, Sizes.PADDING_MD))
+        CTkLabel(slider_frame, text="Độ nhạy chuyển động", font=Fonts.BODY).pack(anchor="w")
+        CTkSlider(slider_frame, from_=0, to=100, progress_color=Colors.PRIMARY).pack(fill="x", pady=(5, 0))
+
+    def _build_alarm_page(self, parent):
+        self._create_section_header(parent, "Cảnh báo & Âm thanh", "Cấu hình âm báo và phản ứng.")
+        
         fields = [
             {"label": "Độ nhạy cảnh báo người", "key": "alarm.person_sensitivity", "type": "float", "min": 0.0, "max": 1.0},
-            {"label": "Thời gian chờ giữa các cảnh báo (giây)", "key": "alarm.cooldown_seconds", "type": "int", "min": 0, "max": 3600},
+            {"label": "Thời gian chờ (giây)", "key": "alarm.cooldown_seconds", "type": "int", "min": 0, "max": 3600},
             {"label": "Âm lượng tối đa (0.0 - 1.0)", "key": "alarm.max_volume", "type": "float", "min": 0.0, "max": 1.0},
         ]
-        self._create_section(parent, "🔊 Cảnh báo & Âm thanh", fields)
+        self._create_settings_group(parent, "Alarm Settings", fields)
 
-    def _create_ai_section(self, parent) -> None:
+    def _build_assistant_page(self, parent):
+        self._create_section_header(parent, "Trợ lý ảo AI", "Cấu hình LLM và phản hồi thông minh.")
+        
         fields = [
-            {"label": "Dùng LLM phân loại phản hồi", "key": "ai.use_llm_for_classification", "type": "bool"},
+            {"label": "Dùng LLM phân loại", "key": "ai.use_llm_for_classification", "type": "bool"},
             {"label": "Nhiệt độ (Sáng tạo)", "key": "ai.temperature", "type": "float", "min": 0.0, "max": 2.0},
             {"label": "Số token tối đa", "key": "ai.max_tokens", "type": "int", "min": 16, "max": 8192},
         ]
-        self._create_section(parent, "🧠 Trợ lý ảo AI", fields)
+        self._create_settings_group(parent, "LLM Configuration", fields)
 
-    # ------------------------------------------------------------------ Helpers tạo UI
-    def _create_section(self, parent: CTkFrame, title: str, fields: List[Dict[str, Any]]) -> None:
-        # Card chứa section
+    # ================= HELPERS =================
+
+    def _create_section_header(self, parent, title, subtitle):
+        frame = CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", pady=(0, Sizes.PADDING_MD))
+        CTkLabel(frame, text=title, font=Fonts.TITLE_MD, text_color=Colors.TEXT_PRIMARY).pack(anchor="w")
+        CTkLabel(frame, text=subtitle, font=Fonts.BODY, text_color=Colors.TEXT_MUTED).pack(anchor="w")
+
+    def _add_switch(self, parent, text, key, default):
+        frame = CTkFrame(parent, fg_color="transparent")
+        frame.pack(fill="x", padx=Sizes.PADDING_MD, pady=5)
+        
+        CTkLabel(frame, text=text, font=Fonts.BODY, text_color=Colors.TEXT_PRIMARY).pack(side="left")
+        
+        val = settings.get(key, default) == "on"
+        var = StringVar(value="on" if val else "off")
+        
+        CTkSwitch(
+            frame, text="", variable=var, onvalue="on", offvalue="off", 
+            progress_color=Colors.PRIMARY,
+            command=lambda k=key, v=var: update_config_value(k, v.get() == "on")
+        ).pack(side="right")
+
+    def _create_settings_group(self, parent, title, fields):
         card = create_card_frame(parent, fg_color=Colors.BG_SECONDARY)
-        card.pack(fill="x", padx=0, pady=(0, 15))
+        card.pack(fill="x", pady=(0, Sizes.PADDING_MD))
         
-        # Tiêu đề section
-        header = CTkLabel(
-            card, 
-            text=title, 
-            font=Fonts.BODY_BOLD, 
-            text_color=Colors.PRIMARY_LIGHT
-        )
-        header.pack(anchor="w", padx=15, pady=(15, 10))
-
-        # Grid layout cho các fields: Cột 0 là Label, Cột 1 là Input
-        grid_frame = CTkFrame(card, fg_color="transparent")
-        grid_frame.pack(fill="x", padx=15, pady=(0, 15))
-        grid_frame.grid_columnconfigure(0, weight=1) # Label chiếm phần lớn
-        grid_frame.grid_columnconfigure(1, weight=0) # Input kích thước cố định
-
+        CTkLabel(card, text=title, font=Fonts.BODY_BOLD, text_color=Colors.PRIMARY_LIGHT).pack(anchor="w", padx=Sizes.PADDING_MD, pady=(Sizes.PADDING_MD, Sizes.PADDING_SM))
+        
+        grid = CTkFrame(card, fg_color="transparent")
+        grid.pack(fill="x", padx=Sizes.PADDING_MD, pady=(0, Sizes.PADDING_MD))
+        grid.grid_columnconfigure(0, weight=1)
+        grid.grid_columnconfigure(1, weight=0)
+        
         prepared_fields = []
-        for idx, field in enumerate(fields):
-            value = settings.get(field["key"])
-            prepared = self._create_field(grid_frame, idx, field, value)
-            prepared_fields.append(prepared)
-
-        # Nút lưu
-        save_btn = create_modern_button(
-            card,
-            text="Lưu thay đổi nhóm này",
-            command=lambda items=prepared_fields, s=title: self._save_fields(items, s),
-            width=200,
-            height=35
-        )
-        save_btn.pack(anchor="e", padx=15, pady=(0, 15))
         
-        self.sections.append(prepared_fields)
-
-    def _create_field(self, parent: CTkFrame, row: int, field: Dict[str, Any], value: Any) -> Dict[str, Any]:
-        """Tạo một dòng cài đặt: Label bên trái, Input bên phải."""
-        
-        # Label
-        label = CTkLabel(
-            parent,
-            text=field["label"],
-            font=Fonts.BODY,
-            text_color=Colors.TEXT_PRIMARY,
-            anchor="w"
-        )
-        label.grid(row=row, column=0, sticky="ew", pady=8, padx=(0, 20))
-
-        field_info = {
-            "key": field["key"],
-            "type": field["type"],
-            "min": field.get("min"),
-            "max": field.get("max"),
-            "widget": None,
-        }
-
-        # Widget Input
-        ftype = field["type"]
-        widget = None
-
-        if ftype == "bool":
-            # Switch
-            var = StringVar(value="on" if bool(value) else "off")
-            widget = CTkSwitch(
-                parent,
-                text="",
-                variable=var,
-                onvalue="on",
-                offvalue="off",
-                progress_color=Colors.PRIMARY,
-                width=50
-            )
-            widget.grid(row=row, column=1, sticky="e")
-            field_info["var"] = var
-
-        elif ftype == "str" and "options" in field:
-            # Dropdown
-            var = StringVar(value=str(value) if value else field["options"][0])
-            widget = CTkOptionMenu(
-                parent,
-                variable=var,
-                values=field["options"],
-                font=Fonts.SMALL,
-                fg_color=Colors.BG_TERTIARY,
-                button_color=Colors.PRIMARY,
-                button_hover_color=Colors.PRIMARY_HOVER,
-                width=150,
-                height=30
-            )
-            widget.grid(row=row, column=1, sticky="e")
-            field_info["var"] = var
-
-        else:
-            # Text Entry (Int/Float)
-            # Sử dụng CTkEntry trực tiếp để kiểm soát màu nền tốt hơn
-            entry_bg = Colors.BG_TERTIARY
-            if entry_bg == Colors.BG_SECONDARY: # Nếu màu trùng nhau thì làm sáng hơn chút
-                entry_bg = "#2C3E50" # Fallback dark color
-
-            widget = CTkEntry(
-                parent,
-                placeholder_text="Nhập giá trị...",
-                font=Fonts.BODY,
-                fg_color=entry_bg, 
-                border_color=Colors.BORDER,
-                text_color=Colors.TEXT_PRIMARY,
-                width=150,
-                height=30
-            )
-            if value is not None:
-                widget.insert(0, str(value))
+        for i, field in enumerate(fields):
+            val = settings.get(field["key"])
             
-            widget.grid(row=row, column=1, sticky="e")
+            # Label
+            CTkLabel(grid, text=field["label"], font=Fonts.BODY, anchor="w").grid(row=i, column=0, sticky="ew", pady=5)
+            
+            # Input
+            widget = None
+            info = {"key": field["key"], "type": field["type"], "min": field.get("min"), "max": field.get("max")}
+            
+            if field["type"] == "bool":
+                var = StringVar(value="on" if bool(val) else "off")
+                widget = CTkSwitch(grid, text="", variable=var, onvalue="on", offvalue="off", progress_color=Colors.PRIMARY, width=50)
+                widget.grid(row=i, column=1, sticky="e")
+                info["var"] = var
+            
+            elif field["type"] == "str" and "options" in field:
+                var = StringVar(value=str(val) if val else field["options"][0])
+                widget = CTkOptionMenu(grid, variable=var, values=field["options"], width=150, fg_color=Colors.BG_TERTIARY)
+                widget.grid(row=i, column=1, sticky="e")
+                info["var"] = var
+                
+            else:
+                widget = CTkEntry(grid, width=150, fg_color=Colors.BG_TERTIARY, border_color=Colors.BORDER)
+                if val is not None: widget.insert(0, str(val))
+                widget.grid(row=i, column=1, sticky="e")
+            
+            info["widget"] = widget
+            prepared_fields.append(info)
+            
+        # Save Button
+        create_modern_button(
+            card, text="Lưu thay đổi", width=120, height=30,
+            command=lambda: self._save_group(prepared_fields, title)
+        ).pack(anchor="e", padx=Sizes.PADDING_MD, pady=(0, Sizes.PADDING_MD))
 
-        field_info["widget"] = widget
-        return field_info
-
-    # ------------------------------------------------------------------ Logic Lưu & Cập nhật
-    def _save_fields(self, items: List[Dict[str, Any]], section_name: str) -> None:
-        updated_keys = []
+    def _save_group(self, items, group_name):
         try:
             for item in items:
                 key = item["key"]
                 ftype = item["type"]
-                widget = item["widget"]
                 
-                new_value = None
-
+                new_val = None
                 if ftype == "bool":
-                    var = item["var"]
-                    new_value = (var.get() == "on")
-                elif ftype == "str" and "var" in item: # OptionMenu
-                    new_value = item["var"].get()
-                else: # Entry
-                    raw_text = widget.get().strip()
-                    if raw_text == "": continue
+                    new_val = item["var"].get() == "on"
+                elif ftype == "str" and "var" in item:
+                    new_val = item["var"].get()
+                else:
+                    raw = item["widget"].get().strip()
+                    if not raw: continue
+                    if ftype == "int": new_val = int(raw)
+                    elif ftype == "float": new_val = float(raw)
+                    else: new_val = raw
                     
-                    if ftype == "int":
-                        new_value = int(raw_text)
-                    elif ftype == "float":
-                        new_value = float(raw_text)
-                    else:
-                        new_value = raw_text
-
-                    # Validate min/max
-                    vmin, vmax = item.get("min"), item.get("max")
-                    if vmin is not None and new_value < vmin:
-                        raise ValueError(f"{key}: Giá trị {new_value} nhỏ hơn mức tối thiểu {vmin}")
-                    if vmax is not None and new_value > vmax:
-                        raise ValueError(f"{key}: Giá trị {new_value} lớn hơn mức tối đa {vmax}")
-
-                # Update setting
-                update_config_value(key, new_value)
-                updated_keys.append(key)
-
-            CTkMessagebox(title="Đã lưu", message=f"Đã cập nhật thành công nhóm:\n{section_name}", icon="check")
-            self._update_summary() # Cập nhật lại bảng tóm tắt phía trên
-
+                    # Validate
+                    if item["min"] is not None and new_val < item["min"]: raise ValueError(f"{key} too small")
+                    if item["max"] is not None and new_val > item["max"]: raise ValueError(f"{key} too large")
+                
+                update_config_value(key, new_val)
+                
         except Exception as e:
-            print(f"ERROR saving settings: {e}")
-            CTkMessagebox(title="Lỗi", message=f"Lỗi khi lưu cài đặt:\n{str(e)}", icon="cancel")
-
-    def _toggle_global_detection(self) -> None:
-        enabled = (self.global_detection_var.get() == "on")
-        update_config_value("detection.global_enabled", enabled)
-        if self.state_manager:
-            self.state_manager.set_person_detection_enabled(enabled)
-        self._update_summary()
-
-    def _toggle_ai_enabled(self) -> None:
-        enabled = (self.global_ai_var.get() == "on")
-        update_config_value("ai.enabled", enabled)
-        self._update_summary()
-
-    def _update_summary(self) -> None:
-        # Lấy giá trị mới nhất từ settings
-        det_on = bool(settings.get("detection.global_enabled", True))
-        ai_on = bool(settings.get("ai.enabled", False))
-        
-        p_thr = settings.get("detection.person_confidence_threshold", 0.6)
-        f_thr = settings.get("detection.fire_confidence_threshold", 0.6)
-        temp = settings.get("ai.temperature", 0.7)
-
-        # Sync switches
-        self.global_detection_var.set("on" if det_on else "off")
-        self.global_ai_var.set("on" if ai_on else "off")
-
-        # Text summary
-        text = f"• Phát hiện: {'ĐANG BẬT' if det_on else 'TẮT'} (Người > {p_thr} | Cháy > {f_thr})\n"
-        text += f"• AI: {'ĐANG BẬT' if ai_on else 'TẮT'} (Nhiệt độ: {temp})\n"
-        
-        self.summary_label.configure(text=text)
-
-
-# ============================================================================
-# SECURITY PANEL
-# ============================================================================
-
-class SecurityPanel(CTkFrame):
-    """Panel cài đặt bảo mật"""
-    
-    def __init__(self, parent, state_manager, **kwargs):
-        super().__init__(parent, fg_color="transparent", **kwargs)
-        
-        self.state = state_manager
-        
-        # Variables
-        self.motion_detection_var = StringVar(value="on")
-        self.face_blur_var = StringVar(value="off")
-        self.auto_lock_var = StringVar(value="on")
-        self.two_factor_var = StringVar(value="off")
-        self.sensitivity_var = IntVar(value=70)
-        
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
-        
-        self._create_content()
-        
-    def _create_content(self):
-        card = create_card_frame(self, fg_color=Colors.BG_SECONDARY)
-        card.grid(row=0, column=0, sticky="nsew", padx=0, pady=0)
-        
-        CTkLabel(card, text="🛡️ Security Settings", font=Fonts.TITLE_SM, text_color=Colors.TEXT_PRIMARY).pack(anchor="w", padx=20, pady=(20, 10))
-        
-        self._create_switch(card, "Motion Detection", self.motion_detection_var)
-        self._create_switch(card, "Face Blurring (Privacy)", self.face_blur_var)
-        self._create_switch(card, "Auto Lock on Idle", self.auto_lock_var)
-        self._create_switch(card, "Two-Factor Auth", self.two_factor_var)
-        
-        CTkLabel(card, text="Motion Sensitivity", font=Fonts.BODY, text_color=Colors.TEXT_PRIMARY).pack(anchor="w", padx=20, pady=(10, 5))
-        slider = CTkSlider(card, from_=0, to=100, variable=self.sensitivity_var, progress_color=Colors.PRIMARY)
-        slider.pack(fill="x", padx=20, pady=5)
-
-    def _create_switch(self, parent, text, variable):
-        frame = CTkFrame(parent, fg_color="transparent")
-        frame.pack(fill="x", padx=20, pady=5)
-        
-        CTkLabel(frame, text=text, font=Fonts.BODY, text_color=Colors.TEXT_PRIMARY).pack(side="left")
-        CTkSwitch(frame, text="", variable=variable, onvalue="on", offvalue="off", progress_color=Colors.PRIMARY).pack(side="right")
-
-
-# ============================================================================
-# RECORDING PANEL
-# ============================================================================
+            CTkMessagebox(title="Error", message=f"Failed to save settings: {e}", icon="cancel")
+        else:
+            CTkMessagebox(title="Success", message=f"{group_name} saved successfully!", icon="check")
 
 class RecordingPanel(CTkFrame):
     """Panel điều khiển ghi hình"""
@@ -589,69 +432,41 @@ class RecordingPanel(CTkFrame):
         if rec:
             self.is_recording = True
             self.recording_start = datetime.now()
-            
-            self.status_label.configure(
-                text="🔴 Recording...",
-                text_color=Colors.DANGER
-            )
-            self.record_btn.configure(text="Stop Recording")
-            
-            print(f"INFO: Recording started on camera {camera_source} for {duration}s")
+            self.record_btn.configure(text="Stop Recording", fg_color=Colors.BG_ELEVATED)
+            self.status_label.configure(text="🔴 Recording...", text_color=Colors.DANGER)
+            self.info_label.configure(text=f"Recording {camera_source} for {duration}s...")
     
     def _stop_recording(self):
         """Stop recording"""
-        self.recorder.stop_and_discard()
+        self.recorder.stop()
         self.is_recording = False
         self.recording_start = None
-        
-        self.status_label.configure(
-            text="⭕ Not Recording",
-            text_color=Colors.TEXT_SECONDARY
-        )
-        self.record_btn.configure(text="Start Recording")
+        self.record_btn.configure(text="Start Recording", fg_color=Colors.DANGER)
+        self.status_label.configure(text="⭕ Not Recording", text_color=Colors.TEXT_SECONDARY)
+        self.info_label.configure(text="Recording stopped")
         self.progress.set(0)
-        self.progress_bar.set(0)
         
-        print("INFO: Recording stopped manually")
-    
     def _open_recordings_folder(self):
         """Open recordings folder"""
-        folder_path = self.recorder.out_dir
-        
-        if platform.system() == 'Windows':
-            os.startfile(folder_path)
-        elif platform.system() == 'Darwin':  # macOS
-            os.system(f'open "{folder_path}"')
-        else:  # Linux
-            os.system(f'xdg-open "{folder_path}"')
-    
+        path = settings.paths.recordings_dir
+        if platform.system() == "Windows":
+            os.startfile(path)
+        elif platform.system() == "Darwin":
+            os.system(f"open {path}")
+        else:
+            os.system(f"xdg-open {path}")
+
     def _start_update_loop(self):
-        """Start update loop"""
-        def update():
-            try:
-                if self.is_recording and self.recording_start:
-                    elapsed = (datetime.now() - self.recording_start).total_seconds()
-                    duration = self.duration_var.get()
-                    progress = min(1.0, elapsed / duration)
-                    self.progress.set(int(progress * 100))  # Convert to percentage (0-100)
-                    self.progress_bar.set(progress)
-                    
-                    remaining = max(0, duration - elapsed)
-                    self.info_label.configure(
-                        text=f"Recording: {int(elapsed)}s / {duration}s (Remaining: {int(remaining)}s)"
-                    )
-                    
-                    if self.recorder.current is None:
-                        self._stop_recording()
-                else:
-                    if self.recorder.current:
-                        path = self.recorder.current.get('path', 'N/A')
-                        self.info_label.configure(text=f"Current: {Path(path).name}")
-                    else:
-                        self.info_label.configure(text="")
-            except Exception as e:
-                print(f"ERROR: Recording update error: {e}")
-            finally:
-                self.after(1000, update)
+        """Update progress loop"""
+        if self.is_recording and self.recording_start:
+            elapsed = (datetime.now() - self.recording_start).total_seconds()
+            duration = self.duration_var.get()
+            
+            if elapsed >= duration:
+                self._stop_recording()
+            else:
+                prog = elapsed / duration
+                self.progress.set(prog)
+                self.info_label.configure(text=f"Recording... {int(elapsed)}/{duration}s")
         
-        update()
+        self.after(100, self._start_update_loop)

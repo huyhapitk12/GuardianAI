@@ -115,6 +115,14 @@ class AlertType(Enum):
     STRANGER = "nguoi_la"
     FIRE_WARNING = "lua_chay_nghi_ngo"
     FIRE_CRITICAL = "lua_chay_khan_cap"
+    ANOMALOUS_BEHAVIOR = "hanh_vi_bat_thuong"
+
+class AlertPriority(Enum):
+    """Alert priority levels for different response urgency"""
+    CRITICAL = 1  # Fire alerts - immediate action required
+    HIGH = 2      # Stranger with anomalous behavior - security threat
+    MEDIUM = 3    # Stranger only - security monitoring
+    LOW = 4       # Known person - informational
 
 class ActionCode(Enum):
     TOGGLE_ON = "TOGGLE_ON"

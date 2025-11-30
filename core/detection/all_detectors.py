@@ -24,6 +24,7 @@ except ImportError:
 # Local imports
 from config import settings
 from insightface.app import FaceAnalysis
+from insightface.model_zoo import get_model
 from trackers import SORTTracker
 
 # ============================================================================
@@ -39,8 +40,24 @@ def print_warning(module, msg): _log("WARNING", module, msg)
 def print_error(module, msg): _log("ERROR", module, msg)
 
 # ============================================================================
+# ============================================================================
 # FACE DETECTION
 # ============================================================================
+
+class CustomFaceAnalysis(FaceAnalysis):
+    def __init__(self, det_path, rec_path, providers):
+        self.models = {}
+        self.models['detection'] = get_model(str(det_path), providers=providers)
+        self.models['recognition'] = get_model(str(rec_path), providers=providers)
+        self.det_model = self.models['detection']
+
+    def prepare(self, ctx_id, det_size=(640, 640)):
+        self.det_size = det_size
+        for taskname, model in self.models.items():
+            if taskname=='detection':
+                model.prepare(ctx_id, input_size=det_size)
+            else:
+                model.prepare(ctx_id)
 
 class FaceDetector:
     def __init__(self, detector_name: Optional[str] = None, recognizer_name: Optional[str] = None):
@@ -64,21 +81,54 @@ class FaceDetector:
             except: pass
 
             model_root = str(settings.paths.model_dir)
-            det_path = Path(model_root) / self.detector_name / f"det_{'10g' if self.detector_name == 'buffalo_l' else '500m'}.onnx"
-            rec_path = Path(model_root) / self.recognizer_name / f"w600k_{'r50' if self.recognizer_name == 'buffalo_l' else 'mbf'}.onnx"
             
-            if not det_path.exists() or not rec_path.exists():
-                raise FileNotFoundError("Face models not found")
+            # Tìm kiếm model động trong thư mục
+            det_path, rec_path = self._find_models(model_root)
+            
+            if not det_path or not rec_path:
+                raise FileNotFoundError(f"Face models not found in {self.detector_name}/{self.recognizer_name}")
 
             if FaceAnalysis:
-                self.app = FaceAnalysis(det_model=str(det_path), rec_model=str(rec_path), root=model_root, allowed_modules=['detection', 'recognition'], providers=providers)
+                self.app = CustomFaceAnalysis(det_path=det_path, rec_path=rec_path, providers=providers)
                 self.app.prepare(ctx_id=settings.models.insightface_ctx_id, det_size=settings.models.insightface_det_size)
                 print_info("face", f"Initialized {self.detector_name}/{self.recognizer_name}")
+                print_info("face", f"  Detector: {det_path.name}")
+                print_info("face", f"  Recognizer: {rec_path.name}")
                 return True
             return False
         except Exception as e:
+            import traceback
+            traceback.print_exc()
             print_error("face", f"Init failed: {e}")
             return False
+    
+    def _find_models(self, model_root: str) -> Tuple[Optional[Path], Optional[Path]]:
+        """Tự động tìm kiếm detector và recognizer model trong thư mục"""
+        det_dir = Path(model_root) / self.detector_name
+        rec_dir = Path(model_root) / self.recognizer_name
+        
+        det_path = None
+        rec_path = None
+        
+        # Tìm detector model
+        if det_dir.exists() and det_dir.is_dir():
+            for f in det_dir.glob("*.onnx"):
+                fname_lower = f.name.lower()
+                # Tìm file có chứa "detector"
+                if "detect" in fname_lower:
+                    det_path = f
+                    break
+        
+        # Tìm recognizer model
+        if rec_dir.exists() and rec_dir.is_dir():
+            for f in rec_dir.glob("*.onnx"):
+                fname_lower = f.name.lower()
+                # Tìm file có chứa "recog"
+                if "recog" in fname_lower:
+                    rec_path = f
+                    break
+        
+        return det_path, rec_path
     
     def load_known_faces(self) -> bool:
         try:
@@ -189,7 +239,7 @@ class FireDetector:
             print_error("fire", f"Init failed: {e}")
             return False
 
-    def detect(self, image: np.ndarray) -> List[Dict]:
+    def detect(self, image: np.ndarray, conf_threshold: float = None) -> List[Dict]:
         if not self.model: return []
         try:
             results = self.model(image, verbose=False, device='cpu')
@@ -205,7 +255,10 @@ class FireDetector:
                     x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
                     
                     if name in ["smoke", "fire", "flame"]:
-                        thresh = settings.detection.smoke_confidence_threshold if name == "smoke" else settings.detection.fire_confidence_threshold
+                        # Use provided threshold or fallback to settings
+                        base_thresh = settings.detection.smoke_confidence_threshold if name == "smoke" else settings.detection.fire_confidence_threshold
+                        thresh = conf_threshold if conf_threshold is not None else base_thresh
+                        
                         if conf >= thresh:
                             area = ((x2-x1)*(y2-y1)) / area_total if area_total > 0 else 0
                             detections.append({"bbox": (x1, y1, x2, y2), "class": name, "area": area, "conf": conf})
@@ -219,12 +272,12 @@ class OptimizedFireDetector(FireDetector):
         self.frame_count = 0
         self.stats = deque(maxlen=100)
 
-    def detect(self, image: np.ndarray, skip_frames: bool = True) -> List[Dict]:
+    def detect(self, image: np.ndarray, skip_frames: bool = True, conf_threshold: float = None) -> List[Dict]:
         if skip_frames:
             self.frame_count += 1
             if self.frame_count % self.frame_skip != 0: return []
         
-        dets = super().detect(image)
+        dets = super().detect(image, conf_threshold=conf_threshold)
         self.stats.append(len(dets))
         return dets
 
@@ -454,6 +507,32 @@ class PersonTracker:
         union = areaA + areaB - inter
         return inter / union if union > 0 else 0
 
+    def update_behavior_status(self, bbox, score, is_anomaly, scale_x=1.0, scale_y=1.0):
+        """Update behavior status for the track matching the bbox"""
+        if not self.tracked_objects or bbox is None:
+            return
+
+        # Scale bbox to original frame coordinates
+        x1, y1, x2, y2 = bbox
+        scaled_bbox = (x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y)
+        
+        # Find best matching track
+        best_iou = 0
+        best_tid = None
+        
+        for tid, data in self.tracked_objects.items():
+            iou = self._iou(data['bbox'], scaled_bbox)
+            if iou > best_iou:
+                best_iou = iou
+                best_tid = tid
+        
+        # Update if match found (threshold 0.3 to be safe)
+        if best_tid is not None and best_iou > 0.3:
+            data = self.tracked_objects[best_tid]
+            data['behavior_score'] = score
+            data['is_anomaly'] = is_anomaly
+            data['last_behavior_update'] = time.time()
+
     def draw_tracks(self, frame: np.ndarray) -> np.ndarray:
         """Draw bounding boxes and labels for tracked persons"""
         for tid, data in self.tracked_objects.items():
@@ -463,11 +542,28 @@ class PersonTracker:
             # Choose color based on identity status
             color = (0, 255, 0) if data.get('confirmed_name') else (0, 165, 255)
             
+            # Check behavior status
+            behavior_status = ""
+            if 'behavior_score' in data:
+                # Expire behavior status after 2 seconds
+                if time.time() - data.get('last_behavior_update', 0) < 2.0:
+                    score = data['behavior_score']
+                    is_anomaly = data.get('is_anomaly', False)
+                    
+                    if is_anomaly:
+                        behavior_status = f" | BAT THUONG ({score:.2f})"
+                        color = (0, 0, 255) # Red for anomaly
+                    elif score > 0.3:
+                        behavior_status = f" | Nghi ngo ({score:.2f})"
+                        color = (0, 165, 255) # Orange for suspicious
+                    else:
+                        behavior_status = f" | Binh thuong ({score:.2f})"
+            
             # Draw bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
             # Draw label background
-            label = f"ID:{tid} {name}"
+            label = f"ID:{tid} {name}{behavior_status}"
             (w, h), _ = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.6, 1)
             cv2.rectangle(frame, (x1, y1 - 20), (x1 + w, y1), color, -1)
             cv2.putText(frame, label, (x1, y1 - 5), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (255, 255, 255), 1)

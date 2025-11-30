@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 import customtkinter as ctk
-from customtkinter import CTkFrame, CTkLabel, CTkScrollableFrame, CTkProgressBar, CTkCanvas, CTkButton, CTkImage
+from customtkinter import CTkFrame, CTkLabel, CTkScrollableFrame, CTkProgressBar, CTkCanvas, CTkButton, CTkImage, StringVar, CTkSwitch
 
 from config import settings
 from utils.security import security_manager
@@ -45,13 +45,17 @@ class ActivityLogger:
         self.activities.append({'message': message, 'type': activity_type, 'timestamp': datetime.now()})
         for w in self.activity_widgets:
             try: w.add_activity(message, activity_type)
-            except: pass
+            except Exception as e:
+                print(f"Error in monitor loop: {e}")
+                pass
             
     def log_system(self, message: str, level: Literal["info", "success", "warning", "error"] = "info"):
         self.logs.append({'message': message, 'level': level, 'timestamp': datetime.now()})
         for w in self.log_widgets:
             try: w.add_log(message, level)
-            except: pass
+            except Exception as e:
+                print(f"Error in monitor loop: {e}")
+                pass
 
     def register_activity_widget(self, widget): 
         if widget not in self.activity_widgets: self.activity_widgets.append(widget)
@@ -74,6 +78,14 @@ class ActivityFeedWidget(CTkScrollableFrame):
         for act in list(self.logger.activities): self.add_activity(act['message'], act['type'])
 
     def add_activity(self, message: str, status: ActivityType = "info"):
+        # Limit number of widgets to prevent lag
+        MAX_ITEMS = 50
+        children = self.winfo_children()
+        if len(children) >= MAX_ITEMS:
+            # Remove oldest items (first ones in pack order)
+            for i in range(len(children) - MAX_ITEMS + 1):
+                children[i].destroy()
+
         item = CTkFrame(self, fg_color=Colors.BG_TERTIARY, corner_radius=Sizes.CORNER_RADIUS_SM)
         item.pack(fill="x", pady=2)
         
@@ -96,6 +108,13 @@ class SystemLogsWidget(CTkScrollableFrame):
         for log in list(self.logger.logs): self.add_log(log['message'], log['level'])
 
     def add_log(self, message: str, level="info"):
+        # Limit number of widgets
+        MAX_ITEMS = 100
+        children = self.winfo_children()
+        if len(children) >= MAX_ITEMS:
+            for i in range(len(children) - MAX_ITEMS + 1):
+                children[i].destroy()
+
         colors = {"info": Colors.TEXT_SECONDARY, "success": Colors.SUCCESS, "warning": Colors.WARNING, "error": Colors.DANGER}
         frame = CTkFrame(self, fg_color="transparent")
         frame.pack(fill="x", pady=1)
@@ -112,15 +131,14 @@ class SystemLogsWidget(CTkScrollableFrame):
 
 class CameraHealthWidget(CTkFrame):
     def __init__(self, parent, camera_manager, **kwargs):
-        super().__init__(parent, fg_color="transparent", **kwargs)
+        super().__init__(parent, fg_color="transparent", height=200, **kwargs)
         self.camera_manager = camera_manager
         self.widgets = {}
-        self.grid_columnconfigure(0, weight=1)
-        self.grid_rowconfigure(1, weight=1)
         
         # Header
         h = CTkFrame(self, fg_color="transparent")
-        h.grid(row=0, column=0, sticky="ew", padx=Sizes.PADDING_SM, pady=Sizes.PADDING_SM)
+        h.pack(fill="x", padx=Sizes.PADDING_SM, pady=(Sizes.PADDING_SM, 0))
+        
         tf = CTkFrame(h, fg_color="transparent")
         tf.pack(side="left")
         CTkLabel(tf, text="📹", font=("Segoe UI", 20), text_color=Colors.PRIMARY).pack(side="left", padx=(0, Sizes.PADDING_SM))
@@ -132,13 +150,12 @@ class CameraHealthWidget(CTkFrame):
         self.summary.pack(side="left")
 
         self.scroll = CTkScrollableFrame(self, fg_color=Colors.BG_PRIMARY, corner_radius=Sizes.CORNER_RADIUS)
-        self.scroll.grid(row=1, column=0, sticky="nsew")
-        self.scroll.grid_columnconfigure(0, weight=1)
+        self.scroll.pack(fill="both", expand=True, padx=Sizes.PADDING_SM, pady=Sizes.PADDING_SM)
         
         if self.camera_manager:
             for i, (src, cam) in enumerate(self.camera_manager.cameras.items()):
                 w = self._create_widget(src)
-                w.grid(row=i, column=0, sticky="ew", padx=Sizes.PADDING_SM, pady=Sizes.PADDING_XS)
+                w.pack(fill="x", padx=Sizes.PADDING_SM, pady=Sizes.PADDING_XS)
                 self.widgets[src] = w
         
         self._monitor()
@@ -185,7 +202,12 @@ class CameraHealthWidget(CTkFrame):
                 if not cam: continue
                 stat = cam.get_connection_status()
                 
-                if stat['is_healthy']:
+                if isinstance(stat, dict):
+                    is_healthy = stat.get('is_healthy', False)
+                else:
+                    is_healthy = bool(stat)
+                
+                if is_healthy:
                     w.lbls['status'].configure(text="Connected", text_color=Colors.SUCCESS)
                     w.lbls['dot'].configure(fg_color=Colors.SUCCESS)
                     w.prog.set(1.0)
@@ -202,7 +224,9 @@ class CameraHealthWidget(CTkFrame):
 
             if total > 0:
                 self.summary.configure(text=f"{healthy}/{total} Healthy", text_color=Colors.SUCCESS if healthy==total else Colors.WARNING)
-        except: pass
+        except Exception as e:
+            print(f"Error in monitor loop: {e}")
+            pass
         self.after(2000, self._monitor)
 
 class FireHistoryWidget(CTkFrame):
@@ -304,7 +328,9 @@ class GalleryPanel(CTkFrame):
         for f in tmp.iterdir():
             if f.suffix.lower() in ['.jpg', '.png', '.mp4']:
                 try: files.append({'path': f, 'time': f.stat().st_mtime, 'name': f.name, 'type': 'video' if f.suffix=='.mp4' else 'image'})
-                except: pass
+                except Exception as e:
+                    print(f"Error in monitor loop: {e}")
+                    pass
         
         files.sort(key=lambda x: x['time'], reverse=True)
         if not files: CTkLabel(self.list, text="No recordings").pack(pady=20)
@@ -339,32 +365,64 @@ class GalleryPanel(CTkFrame):
         if hasattr(self.view, '_image_ref'):
             delattr(self.view, '_image_ref')
             
-        if item['type'] == 'image':
-            self.ctrl.grid_remove()
-            self._show_img(item['path'])
-        else:
-            self.ctrl.grid()
-            self.play_btn.configure(text="▶ Play", state="normal")
-            self._prep_vid(item['path'])
+        self._safe_update_view(image=None, text="Loading...")
+
+        def load_media_thread():
+            try:
+                if item['type'] == 'image':
+                    # Update UI from thread
+                    self.root_after_safe(lambda: self.ctrl.grid_remove())
+                    self._show_img(item['path'])
+                else:
+                    self.root_after_safe(lambda: self.ctrl.grid())
+                    self.root_after_safe(lambda: self.play_btn.configure(text="▶ Play", state="normal"))
+                    self._prep_vid(item['path'])
+            except Exception as e:
+                print(f"Error loading media: {e}")
+                self._safe_update_view(text="Error loading file")
+
+        threading.Thread(target=load_media_thread, daemon=True).start()
+
+    def root_after_safe(self, func):
+        """Helper to schedule on main thread safely"""
+        try:
+            self.after(0, func)
+        except Exception:
+            pass
 
     def _show_img(self, path):
-        img = security_manager.decrypt_image(path)
-        if img is None: 
-            self._safe_update_view(text="Decryption failed", image=None)
-            return
-        
-        img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
-        pil = Image.fromarray(img)
-        w, h = self.view.winfo_width(), self.view.winfo_height()
-        if w>0 and h>0: pil.thumbnail((w, h))
-        ctk_img = CTkImage(pil, size=pil.size)
-        
-        # Store reference to prevent garbage collection
-        setattr(self.view, '_image_ref', ctk_img)
-        self._safe_update_view(image=ctk_img, text="")
+        try:
+            img = security_manager.decrypt_image(path)
+            if img is None: 
+                self._safe_update_view(text="Decryption failed", image=None)
+                return
+            
+            img = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
+            pil = Image.fromarray(img)
+            
+            # Get size safely on main thread
+            # We can't access winfo_width directly from thread safely sometimes, 
+            # but usually reading is fine. Writing is the issue.
+            # To be safe, we'll just process the image and schedule update.
+            
+            def update_ui_with_image():
+                if not self.winfo_exists(): return
+                w, h = self.view.winfo_width(), self.view.winfo_height()
+                if w>0 and h>0: pil.thumbnail((w, h))
+                ctk_img = CTkImage(pil, size=pil.size)
+                
+                # Store reference to prevent garbage collection
+                setattr(self.view, '_image_ref', ctk_img)
+                self._safe_update_view(image=ctk_img, text="")
+            
+            self.root_after_safe(update_ui_with_image)
+            
+        except Exception as e:
+            print(f"Image load error: {e}")
+            self._safe_update_view(text="Error loading image")
 
     def _prep_vid(self, path):
-        self._safe_update_view(image=None, text="Loading...")
+        self._safe_update_view(image=None, text="Loading video...")
         self.current_frame = 0 # Reset position for new video
         try:
             data = security_manager.try_decrypt_file(path)
@@ -383,14 +441,20 @@ class GalleryPanel(CTkFrame):
             cap = cv2.VideoCapture(str(self.temp_vid))
             ret, frame = cap.read()
             cap.release()
+            
             if ret:
                 frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
                 pil = Image.fromarray(frame)
-                pil.thumbnail((640, 480))
-                ctk_img = CTkImage(pil, size=pil.size)
                 
-                setattr(self.view, '_image_ref', ctk_img)
-                self._safe_update_view(image=ctk_img, text="")
+                def update_ui_with_video_thumb():
+                    if not self.winfo_exists(): return
+                    pil.thumbnail((640, 480))
+                    ctk_img = CTkImage(pil, size=pil.size)
+                    
+                    setattr(self.view, '_image_ref', ctk_img)
+                    self._safe_update_view(image=ctk_img, text="")
+                
+                self.root_after_safe(update_ui_with_video_thumb)
             else:
                 self._safe_update_view(text="Failed to load video frame")
         except Exception as e: 
@@ -422,7 +486,9 @@ class GalleryPanel(CTkFrame):
                 self.current_frame = cap.get(cv2.CAP_PROP_POS_FRAMES)
                 cap.release()
                 try: self.play_btn.configure(text="▶ Resume")
-                except: pass
+                except Exception as e:
+                    print(f"Error in monitor loop: {e}")
+                    pass
                 return
 
             ret, frame = cap.read()
@@ -431,7 +497,9 @@ class GalleryPanel(CTkFrame):
                 self.playing = False
                 self.current_frame = 0 # Reset when finished
                 try: self.play_btn.configure(text="▶ Play")
-                except: pass
+                except Exception as e:
+                    print(f"Error in monitor loop: {e}")
+                    pass
                 return
             
             frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -465,7 +533,9 @@ class GalleryPanel(CTkFrame):
 
         if self.temp_vid and self.temp_vid.exists():
             try: self.temp_vid.unlink()
-            except: pass
+            except Exception as e:
+                print(f"Error in monitor loop: {e}")
+                pass
         self.temp_vid = None
         
         if hasattr(self.view, '_image_ref'):
@@ -476,3 +546,180 @@ class GalleryPanel(CTkFrame):
         super().destroy()
 
 
+
+class UnifiedCameraList(CTkFrame):
+    """Unified widget showing both controls and health for each camera"""
+    def __init__(self, parent, camera_manager, state_manager, on_view_command=None, on_add_command=None, **kwargs):
+        super().__init__(parent, fg_color="transparent", **kwargs)
+        self.camera_manager = camera_manager
+        self.state = state_manager
+        self.on_view_command = on_view_command
+        self.on_add_command = on_add_command
+        self.widgets = {}
+        self.switches = {}
+        
+        # Header
+        h = CTkFrame(self, fg_color="transparent")
+        h.pack(fill="x", padx=Sizes.PADDING_SM, pady=(Sizes.PADDING_SM, 0))
+        
+        tf = CTkFrame(h, fg_color="transparent")
+        tf.pack(side="left")
+        CTkLabel(tf, text="🎥", font=("Segoe UI", 20), text_color=Colors.PRIMARY).pack(side="left", padx=(0, Sizes.PADDING_SM))
+        CTkLabel(tf, text="Camera Control", font=Fonts.HEADING, text_color=Colors.TEXT_PRIMARY).pack(side="left")
+        
+        # Add Camera Button
+        if self.on_add_command:
+            create_modern_button(h, "+ Add", "primary", "small", width=60, command=self.on_add_command).pack(side="right")
+
+        self.scroll = CTkScrollableFrame(self, fg_color=Colors.BG_PRIMARY, corner_radius=Sizes.CORNER_RADIUS)
+        self.scroll.pack(fill="both", expand=True, padx=Sizes.PADDING_SM, pady=Sizes.PADDING_SM)
+        
+        if self.camera_manager:
+            for i, (src, cam) in enumerate(self.camera_manager.cameras.items()):
+                w = self._create_widget(src)
+                w.pack(fill="x", padx=Sizes.PADDING_SM, pady=Sizes.PADDING_XS)
+                self.widgets[src] = w
+        
+        self._monitor()
+
+    def _create_widget(self, source):
+        c = create_card_frame(self.scroll, fg_color=Colors.BG_SECONDARY)
+        c.lbls = {}
+        
+        # Top Row: Name + Status + Switch
+        h = CTkFrame(c, fg_color="transparent")
+        h.pack(fill="x", padx=Sizes.PADDING_MD, pady=(Sizes.PADDING_MD, 5))
+        
+        # Name
+        CTkLabel(h, text=f"📹 Cam {source}", font=Fonts.BODY_BOLD, text_color=Colors.TEXT_PRIMARY).pack(side="left")
+        
+        # Switch (Right aligned)
+        switch_var = StringVar(value="on" if self.state.is_person_detection_enabled(source) else "off")
+        switch = CTkSwitch(
+            h,
+            text="Detect",
+            variable=switch_var,
+            onvalue="on",
+            offvalue="off",
+            command=lambda s=source, v=switch_var: self._toggle_cam(s, v),
+            width=80,
+            height=24,
+            font=Fonts.SMALL,
+            progress_color=Colors.SUCCESS
+        )
+        switch.pack(side="right")
+        self.switches[source] = switch_var
+        
+        # Status Dot (Right of Name)
+        c.lbls['dot'] = CTkFrame(h, width=10, height=10, corner_radius=5)
+        c.lbls['dot'].pack(side="right", padx=Sizes.PADDING_MD)
+
+        # Middle Row: Stats
+        s = CTkFrame(c, fg_color="transparent")
+        s.pack(fill="x", padx=Sizes.PADDING_MD, pady=(0, 5))
+        
+        c.lbls['fps'] = CTkLabel(s, text="FPS: 0", font=Fonts.TINY, text_color=Colors.TEXT_MUTED)
+        c.lbls['fps'].pack(side="left", padx=(0, 10))
+        c.lbls['res'] = CTkLabel(s, text="Res: 0x0", font=Fonts.TINY, text_color=Colors.TEXT_MUTED)
+        c.lbls['res'].pack(side="left")
+        
+        c.lbls['status'] = CTkLabel(s, text="...", font=Fonts.TINY)
+        c.lbls['status'].pack(side="right")
+
+        # IR Status Row
+        ir_frame = CTkFrame(c, fg_color="transparent")
+        ir_frame.pack(fill="x", padx=Sizes.PADDING_MD, pady=(0, 5))
+        
+        c.lbls['ir_status'] = CTkLabel(ir_frame, text="IR: OFF", font=Fonts.TINY, text_color=Colors.TEXT_MUTED)
+        c.lbls['ir_status'].pack(side="left")
+        
+        # IR Enhance Switch
+        ir_enhance_var = StringVar(value="on" if getattr(self.camera_manager.get_camera(source), 'ir_enhancement_enabled', False) else "off")
+        ir_switch = CTkSwitch(
+            ir_frame,
+            text="IR Enhance",
+            variable=ir_enhance_var,
+            onvalue="on",
+            offvalue="off",
+            command=lambda s=source, v=ir_enhance_var: self._toggle_ir_enhance(s, v),
+            width=80,
+            height=20,
+            font=Fonts.TINY,
+            progress_color=Colors.WARNING
+        )
+        ir_switch.pack(side="right")
+        self.switches[f"{source}_ir"] = ir_enhance_var
+
+        # Bottom Row: Actions (View + Reconnect)
+        b = CTkFrame(c, fg_color="transparent")
+        b.pack(fill="x", padx=Sizes.PADDING_MD, pady=(0, Sizes.PADDING_MD))
+        
+        # View Button
+        if self.on_view_command:
+            create_modern_button(b, "View", "primary", "small", width=60, command=lambda s=source: self.on_view_command(s)).pack(side="left", padx=(0, 5))
+
+        # Reconnect Button
+        create_modern_button(b, "⟳", "secondary", "small", width=30, command=lambda: self._reconnect(source)).pack(side="right")
+        
+        # Progress Bar (at very bottom)
+        c.prog = CTkProgressBar(c, height=4, progress_color=Colors.SUCCESS)
+        c.prog.pack(fill="x", padx=Sizes.PADDING_MD, pady=(0, Sizes.PADDING_SM))
+        
+        return c
+
+    def _toggle_cam(self, source, var):
+        enabled = (var.get() == "on")
+        self.state.set_person_detection(enabled, source)
+        if enabled:
+            log_activity(f"Enabled detection for Camera {source}", "success")
+        else:
+            log_activity(f"Disabled detection for Camera {source}", "warning")
+
+    def _reconnect(self, src):
+        cam = self.camera_manager.get_camera(src)
+        if cam: cam.force_reconnect()
+
+    def _toggle_ir_enhance(self, source, var):
+        cam = self.camera_manager.get_camera(source)
+        if cam and hasattr(cam, 'set_ir_enhancement'):
+            enabled = (var.get() == "on")
+            cam.set_ir_enhancement(enabled)
+
+    def _monitor(self):
+        try:
+            # Removed summary label update as it was removed from header
+            for src, w in self.widgets.items():
+                cam = self.camera_manager.get_camera(src)
+                if not cam: continue
+                stat = cam.get_connection_status()
+                
+                if isinstance(stat, dict):
+                    is_healthy = stat.get('is_healthy', False)
+                else:
+                    is_healthy = bool(stat)
+                
+                if is_healthy:
+                    w.lbls['status'].configure(text="Online", text_color=Colors.SUCCESS)
+                    w.lbls['dot'].configure(fg_color=Colors.SUCCESS)
+                    w.prog.set(1.0)
+                else:
+                    w.lbls['status'].configure(text="Offline", text_color=Colors.DANGER)
+                    w.lbls['dot'].configure(fg_color=Colors.DANGER)
+                    w.prog.set(0.0)
+                
+                if hasattr(cam, 'cap') and cam.cap:
+                    fps = int(cam.cap.get(cv2.CAP_PROP_FPS))
+                    w.lbls['fps'].configure(text=f"FPS: {fps}")
+                    w.lbls['res'].configure(text=f"{int(cam.cap.get(3))}x{int(cam.cap.get(4))}")
+                
+                # Update IR Status
+                if hasattr(cam, 'get_infrared_status'):
+                    is_ir = cam.get_infrared_status()
+                    w.lbls['ir_status'].configure(
+                        text="IR: ON" if is_ir else "IR: OFF",
+                        text_color=Colors.WARNING if is_ir else Colors.TEXT_MUTED
+                    )
+        except Exception as e:
+            print(f"Error in monitor loop: {e}")
+            pass
+        self.after(2000, self._monitor)

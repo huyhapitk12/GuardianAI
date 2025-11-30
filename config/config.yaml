@@ -68,7 +68,7 @@ camera:
     mp4:
       person_detection_enabled: false
 detection:
-  face_recognition_threshold: 0.4
+  face_recognition_threshold: 0.45
   fire_confidence_threshold: 0.85
   global_enabled: true
   iou_threshold: 0.6
@@ -91,9 +91,9 @@ fire_logic:
   yellow_alert_frames: 8
 models:
   face:
-    detector_name: buffalo_l
-    recognizer_name: buffalo_l
-  face_model_name: buffalo_l
+    detector_name: Small
+    recognizer_name: Small
+  face_model_name: Small
   insightface_ctx_id: 0
   insightface_det_size:
   - 640
@@ -130,6 +130,19 @@ tracker:
   stranger_confirm_frames: 20
   timeout_seconds: 2.0
   video_preview_limit_mb: 48.0
+behavior:
+  enabled: true
+  model_path: Data/Model/anomaly_model.pth
+  device: cuda
+  threshold: 0.5
+  alert_cooldown: 30
+  window_size: 64
+  stride: 16
+  num_segments: 32
+  model_complexity: 1
+  min_detection_confidence: 0.5
+  min_tracking_confidence: 0.5
+  process_every_n_frames: 1
 optimization:
   frame_resize_enabled: true
   frame_resize_width: 1280

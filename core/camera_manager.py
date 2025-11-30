@@ -70,13 +70,12 @@ class CameraManager:
             except (RuntimeError, ValueError) as e:
                 print_error(f"Không thể tạo camera cho nguồn {source}: {e}")
 
-    def start_workers(self, fire_detector, face_detector, state_manager):
+    def start_workers(self, fire_detector, face_detector, state_manager, behavior_analyzer=None):
         """Bắt đầu các luồng công nhân cho tất cả các camera."""
         self.fire_detector = fire_detector
         self.face_detector = face_detector
         self.state_manager = state_manager
-
-        self.state_manager = state_manager
+        self.behavior_analyzer = behavior_analyzer
 
         with self._lock:
             cameras_items = list(self.cameras.items())
@@ -87,7 +86,7 @@ class CameraManager:
                 cam.person_tracker.face_detector = face_detector
                 cam.person_tracker.initialize() # Khởi tạo model YOLO bên trong tracker
 
-            cam.start_workers(fire_detector, face_detector)
+            cam.start_workers(fire_detector, face_detector, behavior_analyzer)
             thread = threading.Thread(
                 target=cam.process_frames,
                 args=(state_manager,),
@@ -205,7 +204,7 @@ class CameraManager:
                 pass
 
             # 5. Khởi động worker cho camera mới
-            cam.start_workers(self.fire_detector, self.face_detector)
+            cam.start_workers(self.fire_detector, self.face_detector, self.behavior_analyzer)
             thread = threading.Thread(
                 target=cam.process_frames,
                 args=(self.state_manager,),

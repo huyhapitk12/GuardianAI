@@ -1,25 +1,29 @@
 # core/recorder.py
-import cv2, os, time, uuid, threading, subprocess
+import cv2
+import os
+import time
+import uuid
+import threading
+import subprocess
+import datetime as dt
 from pathlib import Path
 from typing import Optional, Dict, Any
 from shutil import which
 from config import settings
+from utils import security_manager
 
 def print_msg(message):
     """Simple print function to replace logging"""
-    import datetime as dt
     timestamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"{timestamp} - recorder - INFO - {message}")
 
 def print_warning(message):
     """Simple print function for warnings"""
-    import datetime as dt
     timestamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"{timestamp} - recorder - WARNING - {message}")
 
 def print_error(message):
     """Simple print function for errors"""
-    import datetime as dt
     timestamp = dt.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     print(f"{timestamp} - recorder - ERROR - {message}")
 
@@ -130,6 +134,15 @@ class Recorder:
                 self.current["wait_for_user"] = False
                 print_msg("User wait resolved, recording can finalize")
     
+    def stop(self):
+        """Dừng ghi ngay lập tức và lưu video"""
+        with self._lock:
+            if self.current:
+                # Set end time to now to force finalization on next check
+                self.current["end_time"] = time.time()
+                self.current["wait_for_user"] = False
+                print_msg("Recording stop requested")
+
     def check_and_finalize(self) -> Optional[Dict[str, Any]]:
         """Kiểm tra xem bản ghi có nên hoàn tất không và làm như vậy nếu đã sẵn sàng"""
         with self._lock:
@@ -162,7 +175,6 @@ class Recorder:
         
         # Encrypt the video file
         try:
-            from utils import security_manager
             if path and path.exists():
                 security_manager.encrypt_file(path)
                 print_msg(f"Recording encrypted: {path}")
@@ -204,8 +216,6 @@ def compress_video(input_path: Path) -> Optional[Path]:
     ffmpeg = which("ffmpeg")
     if not ffmpeg:
         return None
-    
-    from utils import security_manager
     
     # Decrypt temporarily for ffmpeg
     temp_decrypted = input_path.parent / f"temp_dec_{input_path.name}"

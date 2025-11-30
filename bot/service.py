@@ -106,7 +106,7 @@ def _create_session_with_retry():
     session.mount("https://", adapter)
     return session
 
-def send_photo(token: str, chat_id: str, photo_path: str, caption: str = "", reply_markup: Optional[dict] = None) -> bool:
+def send_photo(token: str, chat_id: str, photo_path: str, caption: str = "", reply_markup: Optional[dict] = None, disable_notification: bool = False) -> bool:
     for attempt in range(3):
         try:
             url = f"https://api.telegram.org/bot{token}/sendPhoto"
@@ -118,7 +118,7 @@ def send_photo(token: str, chat_id: str, photo_path: str, caption: str = "", rep
             else:
                 files = {'photo': open(photo_path, 'rb')}
                 
-            data = {'chat_id': chat_id, 'caption': caption}
+            data = {'chat_id': chat_id, 'caption': caption, 'disable_notification': disable_notification}
             if reply_markup: data['reply_markup'] = json.dumps(reply_markup)
             
             response = session.post(url, files=files, data=data, timeout=30)
@@ -394,11 +394,21 @@ class GuardianBot:
         self.app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, self.handlers.message_listener))
         self.app.add_handler(CallbackQueryHandler(self.handlers.button_callback_handler))
 
-    def schedule_alert(self, chat_id: str, image_path: str, caption: str, alert_id: str, is_fire: bool = False):
+    def schedule_alert(self, chat_id: str, image_path: str, caption: str, alert_id: str, is_fire: bool = False, disable_notification: bool = False):
         if not TELEGRAM_AVAILABLE: return
         kb = create_fire_alert_keyboard(alert_id) if is_fire else create_person_alert_keyboard(alert_id)
         markup = kb.to_dict() if kb else None
-        threading.Thread(target=lambda: send_photo(settings.telegram.token, chat_id, image_path, caption, reply_markup=markup), daemon=True).start()
+        threading.Thread(
+            target=lambda: send_photo(
+                settings.telegram.token, 
+                chat_id, 
+                image_path, 
+                caption, 
+                reply_markup=markup,
+                disable_notification=disable_notification
+            ), 
+            daemon=True
+        ).start()
 
     def schedule_person_alert(self, chat_id: str, image_path: str, caption: str, alert_id: str):
         """Schedules a person alert. Alias for schedule_alert with is_fire=False."""

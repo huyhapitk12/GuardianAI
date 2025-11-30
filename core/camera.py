@@ -8,6 +8,7 @@ import platform
 from typing import Optional, Callable, Tuple, Dict
 from collections import deque
 import numpy as np
+
 from config import settings, AlertType
 
 class Camera:
@@ -50,6 +51,7 @@ class Camera:
         
         # Hàng đợi xử lý
         self.fire_queue = queue.Queue(maxsize=2)
+        self.behavior_queue = queue.Queue(maxsize=2)
         self.result_queue = queue.Queue(maxsize=16)
         
         # Trạng thái phát hiện cháy
@@ -79,6 +81,23 @@ class Camera:
         
         # Debug flag for fire detection
         self._debug_fire_detection = settings.camera.debug_fire_detection
+        
+        # Behavior analysis
+        self.behavior_analyzer = None
+        self._last_behavior_alert = 0
+        self._behavior_alert_cooldown = settings.get('behavior.alert_cooldown', 30)
+        
+        # Stranger tracking for conditional behavior analysis
+        self._has_stranger = False
+        self._last_stranger_detection = 0
+        self._stranger_timeout = 60  # seconds - how long to keep behavior analysis active after last stranger
+        
+        # IR Enhancement control
+        self.ir_enhancement_enabled = settings.camera.infrared.enhancement.enabled
+
+        # Visualization state
+        self.current_pose = None
+        self.current_anomaly_score = 0.0
     
     def _get_camera_backends(self):
         """Get camera backends based on platform"""
@@ -123,7 +142,7 @@ class Camera:
     def _enhance_ir_frame(self, frame: np.ndarray) -> np.ndarray:
         """Apply CLAHE to enhance IR frame contrast"""
         try:
-            if not settings.camera.infrared.enhancement.enabled:
+            if not self.ir_enhancement_enabled:
                 return frame
             
             # Convert to LAB to enhance L channel
@@ -261,16 +280,24 @@ class Camera:
                 return True, self._raw_frame.copy()
             return False, None
     
-    def start_workers(self, fire_detector, face_detector):
+    def start_workers(self, fire_detector, face_detector, behavior_analyzer=None):
         """Start background worker threads"""
         self.fire_detector = fire_detector
         self.face_detector = face_detector
+        self.behavior_analyzer = behavior_analyzer
         
         threading.Thread(
             target=self._fire_worker,
             daemon=True
         ).start()
         print("INFO: Fire detection worker started")
+        
+        if self.behavior_analyzer:
+            threading.Thread(
+                target=self._behavior_worker,
+                daemon=True
+            ).start()
+            print("INFO: Behavior analysis worker started")
     
     def _fire_worker(self):
         """Background worker for fire detection"""
@@ -289,6 +316,69 @@ class Camera:
                     self.result_queue.put(("fire", detections))
             except Exception as e:
                 print(f"ERROR: Fire worker error: {e}")
+    def _behavior_worker(self):
+        """Background worker for behavior analysis"""
+        skip_counter = 0
+        process_every_n = settings.get('behavior.process_every_n_frames', 3)
+        
+        while not self.quit:
+            try:
+                frame = self.behavior_queue.get(timeout=1.0)
+                
+                # Skip frames for performance
+                skip_counter += 1
+                if skip_counter % process_every_n != 0:
+                    continue
+                
+                # New AnomalyDetector returns (frame, score, is_anomaly, pose)
+                annotated_frame, score, is_anomaly, pose = self.behavior_analyzer.process_frame(frame)
+                
+                # Update state for visualization
+                self.current_pose = pose
+                self.current_anomaly_score = score
+                
+                # Update person tracker with behavior info
+                if self.person_tracker and pose and pose.bbox:
+                    try:
+                        # Calculate scale factors
+                        # We need original frame size. Assuming self.cap is available and valid.
+                        # If not, we can't scale accurately, but usually it is.
+                        # Or we can use self._raw_frame size if available.
+                        orig_w = self.cap.get(cv2.CAP_PROP_FRAME_WIDTH) if self.cap else 0
+                        orig_h = self.cap.get(cv2.CAP_PROP_FRAME_HEIGHT) if self.cap else 0
+                        
+                        if orig_w > 0 and orig_h > 0:
+                            proc_w, proc_h = settings.camera.process_size
+                            scale_x = orig_w / proc_w
+                            scale_y = orig_h / proc_h
+                            
+                            self.person_tracker.update_behavior_status(
+                                pose.bbox, 
+                                score, 
+                                is_anomaly, 
+                                scale_x, 
+                                scale_y
+                            )
+                    except Exception as e:
+                        print(f"ERROR: Failed to update behavior status: {e}")
+                
+                if is_anomaly:
+                    # Check cooldown
+                    now = time.time()
+                    if now - self._last_behavior_alert >= self._behavior_alert_cooldown:
+                        # Create a simple result object/dict
+                        result = {
+                            'score': score,
+                            'timestamp': now,
+                            'is_anomaly': is_anomaly
+                        }
+                        self.result_queue.put(('behavior', result, annotated_frame))
+                        self._last_behavior_alert = now
+                        
+            except queue.Empty:
+                continue
+            except Exception as e:
+                print(f"ERROR: Behavior worker error: {e}")
 
     def process_frames(self, state_manager):
         """Main frame processing loop"""
@@ -345,28 +435,29 @@ class Camera:
             
             try:
                 if frame_buffer is None or frame_buffer.shape[:2] != tuple(settings.camera.process_size):
-                    small_frame = cv2.resize(frame, tuple(settings.camera.process_size), interpolation=cv2.INTER_AREA)
+                    small_frame = cv2.resize(frame, tuple(settings.camera.process_size), interpolation=cv2.INTER_LINEAR)
                     frame_buffer = small_frame.copy()
                 else:
-                    cv2.resize(frame, tuple(settings.camera.process_size), dst=frame_buffer, interpolation=cv2.INTER_AREA)
+                    cv2.resize(frame, tuple(settings.camera.process_size), dst=frame_buffer, interpolation=cv2.INTER_LINEAR)
                     small_frame = frame_buffer
             except Exception as e:
                 print(f"ERROR: Resize error: {e}")
-                continue
             
-            scale_x = orig_w / float(settings.camera.process_size[0])
-            scale_y = orig_h / float(settings.camera.process_size[1])
+            # Calculate scale factors for mapping detections back to original frame
+            scale_x = orig_w / settings.camera.process_size[0]
+            scale_y = orig_h / settings.camera.process_size[1]
             
-            if (self._frame_idx > self._warmup_frames and
-                self._frame_idx % settings.camera.process_every_n_frames == 0 and 
-                person_detection_enabled):
+            # Person Detection
+            if person_detection_enabled:
                 self._process_persons(small_frame, frame, scale_x, scale_y, now)
-            
-            if self._frame_idx > self._warmup_frames and not self.fire_queue.full():
-                try:
-                    self.fire_queue.put_nowait(small_frame.copy())
-                except queue.Full:
-                    pass
+
+            # Fire Detection
+            if self.fire_detector and not self.fire_queue.full():
+                self.fire_queue.put(small_frame.copy())
+                
+            # Behavior Analysis
+            if self.behavior_analyzer and not self.behavior_queue.full():
+                self.behavior_queue.put(small_frame.copy())
             
             self.current_fire_boxes = []
             self._process_fire_results(scale_x, scale_y, now, frame)
@@ -421,6 +512,12 @@ class Camera:
             # Kiểm tra cảnh báo
             alerts = self.person_tracker.check_confirmations()
             for track_id, alert_type, metadata in alerts:
+                # Track stranger detection for conditional behavior analysis
+                if alert_type == "nguoi_la":  # AlertType.STRANGER.value
+                    self._has_stranger = True
+                    self._last_stranger_detection = now
+                    print(f"INFO: Stranger detected - activating behavior analysis for {self._stranger_timeout}s")
+                
                 if self.on_person_alert:
                     # Tạo frame chú thích giống GUI để gửi Telegram
                     alert_frame = full_frame.copy()
@@ -428,7 +525,7 @@ class Camera:
                     self.on_person_alert(self.source_id, alert_frame, alert_type, metadata)
         except Exception as e:
             print(f"ERROR: Person processing error: {e}")
-    
+
     def _process_fire_results(
         self,
         scale_x: float,
@@ -436,12 +533,14 @@ class Camera:
         now: float,
         frame: np.ndarray
     ):
-        """Xử lý kết quả phát hiện cháy từ hàng đợi"""
+        """Xử lý kết quả phát hiện cháy và hành vi từ hàng đợi"""
         try:
             while not self.result_queue.empty():
-                result_type, results = self.result_queue.get_nowait()
+                result_tuple = self.result_queue.get_nowait()
+                result_type = result_tuple[0]
                 
                 if result_type == "fire":
+                    results = result_tuple[1]
                     self._handle_fire_detections(
                         results,
                         scale_x,
@@ -449,8 +548,30 @@ class Camera:
                         now,
                         frame
                     )
+                elif result_type == "behavior":
+                    behavior_result = result_tuple[1]
+                    alert_frame = result_tuple[2]
+                    self._handle_behavior_detection(behavior_result, alert_frame)
         except queue.Empty:
             pass
+    
+    def _handle_behavior_detection(self, result, frame):
+        """Handle behavior anomaly detection"""
+        if self.on_person_alert:
+            # Handle both object and dict for backward compatibility/flexibility
+            score = result.get('score') if isinstance(result, dict) else result.score
+            timestamp = result.get('timestamp') if isinstance(result, dict) else result.timestamp
+            
+            metadata = {
+                'score': score,
+                'timestamp': timestamp
+            }
+            self.on_person_alert(
+                self.source_id,
+                frame,
+                AlertType.ANOMALOUS_BEHAVIOR.value,
+                metadata
+            )
 
     def _check_motion_infrared(self, frame: np.ndarray, bbox: Tuple[int, int, int, int], motion_threshold: float, motion_std_min: float, debug: bool = False) -> bool:
         """
@@ -1131,8 +1252,28 @@ class Camera:
         # Vẽ trạng thái IR
         if self._is_infrared_mode:
             cv2.putText(frame, "IR MODE", (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
-            if settings.camera.infrared.enhancement.enabled:
+            if self.ir_enhancement_enabled:
                 cv2.putText(frame, "ENHANCED", (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 255), 1)
+
+        # Vẽ behavior analysis (nếu có)
+        if self.behavior_analyzer and self.current_pose and self.current_pose.is_valid:
+            try:
+                # Scale keypoints từ process_size về frame size hiện tại
+                h, w = frame.shape[:2]
+                proc_w, proc_h = settings.camera.process_size
+                
+                scale_x = w / proc_w
+                scale_y = h / proc_h
+                
+                scaled_kps = self.current_pose.keypoints.copy()
+                scaled_kps[:, 0] *= scale_x
+                scaled_kps[:, 1] *= scale_y
+                
+                color = self.behavior_analyzer.visualizer.get_color(self.current_anomaly_score)
+                self.behavior_analyzer.visualizer.draw_skeleton(frame, scaled_kps, self.current_pose.confidence, color)
+                self.behavior_analyzer.visualizer.draw_info(frame, self.current_anomaly_score)
+            except Exception as e:
+                print(f"ERROR: Visualization error: {e}")
 
     def _update_frames(self, processed_frame, raw_frame):
         """Cập nhật bộ đệm khung hình một cách an toàn"""
@@ -1163,6 +1304,11 @@ class Camera:
         self.red_alert_mode_active = False
         self.yellow_alert_mode_active = False
         print(f"INFO: Fire state reset for camera {self.source_id}")
+
+    def set_ir_enhancement(self, enabled: bool):
+        """Bật/tắt tính năng tăng cường ảnh hồng ngoại"""
+        self.ir_enhancement_enabled = enabled
+        print(f"INFO: IR enhancement for camera {self.source_id} set to {enabled}")
 
     def release(self):
         """Giải phóng tài nguyên"""
