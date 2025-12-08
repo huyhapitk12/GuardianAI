@@ -1,32 +1,20 @@
-# gui/__init__.py
-
-from .manager import ModernFaceManagerGUI, run_gui
-from .styles import (
-    Colors, Fonts, Sizes,
-    create_modern_button, create_glass_card,
-    create_modern_entry, create_status_badge,
-    create_card_frame, create_button_primary,
-    create_button_secondary, create_button_danger,
-    create_entry
+from .app import GuardianApp, run_gui
+from .styles import Colors, Fonts, Sizes, create_button, create_card, create_entry, create_switch, create_label
+from .widgets import (
+    log_activity, log_system,
+    CameraList, CameraCard,
+    GalleryPanel,
+    StatCard, StatusBadge
 )
-from .detection_controls import DetectionControlsFrame
-from .control_panels import SettingsPanel
+from .panels import CamerasPanel, PersonsPanel, SettingsPanel
 
 __all__ = [
-    'ModernFaceManagerGUI',
-    'run_gui',
-    'Colors',
-    'Fonts', 
-    'Sizes',
-    'create_modern_button',
-    'create_glass_card',
-    'create_modern_entry',
-    'create_status_badge',
-    'create_card_frame',
-    'create_button_primary',
-    'create_button_secondary',
-    'create_button_danger',
-    'create_entry',
-    'DetectionControlsFrame',
-    'SettingsPanel'
+    'GuardianApp', 'run_gui',
+    'Colors', 'Fonts', 'Sizes',
+    'create_button', 'create_card', 'create_entry', 'create_switch', 'create_label',
+    'log_activity', 'log_system',
+    'CameraList', 'CameraCard',
+    'GalleryPanel',
+    'StatCard', 'StatusBadge',
+    'CamerasPanel', 'PersonsPanel', 'SettingsPanel',
 ]

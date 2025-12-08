@@ -39,7 +39,7 @@ __pycache__/
 
 
 # Data directories and files (excluding source data structure)
-Data/Image/*
+Data/Faces/*
 Data/Model/
 Data/tmp/
 
@@ -47,6 +47,7 @@ Data/tmp/
 known_embeddings.pkl
 known_names.pkl
 kernel.errors.txt
+system_flowchart.svg
 
 # Application specific files
 recordings/
@@ -55,4 +56,4 @@ screenshots/
 captures/
 exports/
 outputs/
-comprehensive_evaluation.py
+
