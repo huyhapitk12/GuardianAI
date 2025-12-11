@@ -1,127 +1,175 @@
-"""Multi-camera management"""
+# core/camera_manager.py
+# =============================================================================
+# Cho phép:
+# - Thêm/xóa camera
+# - Lấy hình ảnh từ tất cả camera
+# - Kiểm tra trạng thái kết nối
+# =============================================================================
 
-from __future__ import annotations
 import threading
-from typing import Callable, Dict, Optional
 import numpy as np
 
 from config import settings
 from core.camera import Camera
-from core.detection import BehaviorAnalyzer, PersonTracker
+from core.detection import PersonTracker, BehaviorAnalyzer
 
 
 class CameraManager:
-    """Manage multiple cameras"""
+    def __init__(self, person_alert=None, fire_alert=None):
+        # Lưu các camera
+        self.cameras = {} # Key: ID camera, Value: Object Camera
+        
+        # Lưu các thread xử lý
+        self.threads = {}
+        
+        # Lock để tránh xung đột khi nhiều thread truy cập cùng lúc
+        self.lock = threading.Lock()
+        
+        # Lưu các detector để dùng khi thêm camera mới
+        self.fire_detector = None
+        self.face_detector = None
+        self.behavior_analyzer = None
+        self.state = None
+        
+        self.person_alert = person_alert
+        self.fire_alert = fire_alert
+        
+        # Tạo camera từ config
+        self.create_cameras()
     
-    def __init__(self, on_person_alert: Callable = None, on_fire_alert: Callable = None):
-        self.cameras: Dict[str, Camera] = {}
-        self._threads: Dict[str, threading.Thread] = {}
-        self._lock = threading.Lock()
-        
-        self._fire_detector = None
-        self._face_detector = None
-        self._behavior_analyzer: Optional[BehaviorAnalyzer] = None
-        self._state = None
-        
-        self._on_person = on_person_alert
-        self._on_fire = on_fire_alert
-        
-        self._create_cameras()
-    
-
-    def _create_cameras(self):
-        """Create camera instances with shared model"""
-        for source in settings.camera.sources:
+    # Tạo camera từ config
+    def create_cameras(self):
+        sources = settings.camera.sources
+        if not isinstance(sources, (list, tuple)):
+            sources = [sources]
+            
+        for source in sources:
             try:
-                src = int(source) if source.isdigit() else source
-                cam = Camera(src, self._on_person, self._on_fire, shared_model=None)
+                # Nếu source là số (webcam ID), chuyển về int
+                if isinstance(source, int):
+                    src = source
+                elif isinstance(source, str) and source.isdigit():
+                    src = int(source)
+                else:
+                    src = source
+                
+                # Tạo camera
+                cam = Camera(src, self.person_alert, self.fire_alert, shared_model=None)
+                
+                # Thêm vào dictionary
                 self.cameras[str(source)] = cam
-                print(f"✅ Camera created: {source}")
+                print(f"✅ Đã tạo camera: {source}")
+                
             except Exception as e:
-                print(f"❌ Camera create failed {source}: {e}")
+                print(f"❌ Lỗi tạo camera {source}: {e}")
     
-    def start(self, fire_detector, face_detector, state_manager, behavior_analyzer=None):
-        """Start all cameras"""
-        self._fire_detector = fire_detector
-        self._face_detector = face_detector
-        self._behavior_analyzer = behavior_analyzer
-        self._state = state_manager
+    # Chạy tất cả camera
+    def start(self, fire_detector, face_detector, state_manager, behavior_analyzer=None): # fire_detector: Bộ phát hiện cháy, face_detector: Bộ nhận diện khuôn mặt, state_manager: Quản lý trạng thái, behavior_analyzer: Bộ phân tích hành vi
+        # Lưu lại để dùng khi thêm camera mới
+        self.fire_detector = fire_detector
+        self.face_detector = face_detector
+        self.behavior_analyzer = behavior_analyzer
+        self.state = state_manager
         
-        with self._lock:
+        # Dùng lock để tránh xung đột
+        with self.lock:
             for source, cam in self.cameras.items():
+                # Khởi tạo các worker trong camera
                 cam.start_workers(fire_detector, face_detector, behavior_analyzer)
                 
+                # Tạo thread riêng cho mỗi camera
+                # daemon=True: thread tự tắt khi chương trình main tắt
                 thread = threading.Thread(
                     target=cam.process_loop,
                     args=(state_manager,),
                     daemon=True
                 )
-                self._threads[source] = thread
+                
+                self.threads[source] = thread
                 thread.start()
-                print(f"✅ Camera {source} started")
-    
+                print(f"✅ Camera {source} đang chạy!")
+
+    # Dừng tất cả camera    
     def stop(self):
-        """Stop all cameras"""
-        print("Stopping cameras...")
+        print("Đang dừng camera...")
         
-        with self._lock:
+        # Báo hiệu tất cả camera dừng
+        with self.lock:
             for cam in self.cameras.values():
                 cam.quit = True
         
-        for thread in self._threads.values():
+        # Chờ các thread kết thúc (tối đa 5 giây mỗi thread)
+        for thread in self.threads.values():
             thread.join(timeout=5.0)
         
-        print("✅ All cameras stopped")
+        print("✅ Đã dừng tất cả camera!")
     
-    def get_camera(self, source: str) -> Optional[Camera]:
-        with self._lock:
+    # Lấy camera theo ID
+    def get_camera(self, source):
+        with self.lock:
             return self.cameras.get(source)
     
-    def get_all_frames(self) -> Dict[str, tuple]:
+    # Lấy frame từ tất cả camera
+    def get_all_frames(self):
         frames = {}
-        with self._lock:
+        with self.lock:
             for source, cam in self.cameras.items():
                 frames[source] = cam.read()
         return frames
     
-    def get_status(self) -> Dict[str, bool]:
+    # Lấy trạng thái kết nối của tất cả camera
+    def get_status(self):
         status = {}
-        with self._lock:
+        with self.lock:
             for source, cam in self.cameras.items():
                 status[source] = cam.get_connection_status()
         return status
     
-    def add_camera(self, source: str) -> tuple:
-        with self._lock:
+    # Thêm camera mới vào hệ thống
+    def add_camera(self, source): # source: URL hoặc ID của camera
+        # Kiểm tra đã tồn tại chưa
+        with self.lock:
             if source in self.cameras:
-                return False, "Camera already exists"
+                return False, "Camera đã tồn tại!"
         
         try:
-            src = int(source) if source.isdigit() else source
-            cam = Camera(src, self._on_person, self._on_fire, shared_model=None)
+            # Chuyển đổi source
+            if isinstance(source, int):
+                src = source
+            elif isinstance(source, str) and source.isdigit():
+                src = int(source)
+            else:
+                src = source
             
-            if self._fire_detector and self._face_detector:
-                cam.start_workers(self._fire_detector, self._face_detector, self._behavior_analyzer)
+            # Tạo camera mới
+            cam = Camera(src, self.person_alert, self.fire_alert, shared_model=None)
+            
+            # Nếu hệ thống đã chạy, start camera luôn
+            if self.fire_detector and self.face_detector:
+                cam.start_workers(self.fire_detector, self.face_detector, self.behavior_analyzer)
                 
+                # Tạo thread
                 thread = threading.Thread(
                     target=cam.process_loop,
-                    args=(self._state,),
+                    args=(self.state,),
                     daemon=True
                 )
                 
-                with self._lock:
+                # Thêm vào danh sách
+                with self.lock:
                     self.cameras[source] = cam
-                    self._threads[source] = thread
+                    self.threads[source] = thread
                 
                 thread.start()
                 
-                # Save to config for persistence
+                # Lưu vào config để lần sau còn nhớ
                 from config.settings import add_camera_source_to_config
-                save_success, save_msg = add_camera_source_to_config(source)
-                if not save_success:
-                    print(f"⚠️ Warning: Camera added to runtime but not saved to config: {save_msg}")
+                save_ok, save_msg = add_camera_source_to_config(source)
+                
+                if not save_ok:
+                    print(f"⚠️ Camera đã thêm nhưng chưa lưu vào config: {save_msg}")
             
-            return True, f"Camera {source} added"
+            return True, f"Đã thêm camera {source}!"
             
         except Exception as e:
             return False, str(e)

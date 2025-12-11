@@ -3,7 +3,6 @@
 from __future__ import annotations
 import gc
 import os
-import sys
 import time
 import threading
 import functools
@@ -25,21 +24,6 @@ from config import settings
 
 
 # ==================== DECORATORS ====================
-
-def timed(name: Optional[str] = None):
-    """Log execution time for slow functions"""
-    def decorator(func: Callable) -> Callable:
-        @functools.wraps(func)
-        def wrapper(*args, **kwargs):
-            start = time.perf_counter()
-            result = func(*args, **kwargs)
-            elapsed = time.perf_counter() - start
-            if elapsed > 0.1:
-                print(f"⏱️ {name or func.__name__}: {elapsed:.3f}s")
-            return result
-        return wrapper
-    return decorator
-
 
 def retry(attempts: int = 3, delay: float = 1.0):
     """Retry on exception"""

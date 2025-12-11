@@ -32,10 +32,10 @@ class PersonsPanel(ctk.CTkFrame):
         self.face_detector = face_detector
         self.current_person = None
         
-        self._build_ui()
+        self.build_ui()
         self.refresh_list()
     
-    def _build_ui(self):
+    def build_ui(self):
         self.grid_columnconfigure(0, minsize=300)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -116,9 +116,9 @@ class PersonsPanel(ctk.CTkFrame):
         
         # Create cards
         for name in persons:
-            self._create_person_card(name)
+            self.create_person_card(name)
     
-    def _create_person_card(self, name: str):
+    def create_person_card(self, name: str):
         """Create person card"""
         card = ctk.CTkFrame(
             self.person_list,
@@ -195,11 +195,11 @@ class PersonsPanel(ctk.CTkFrame):
         ).pack(side="left", padx=2)
         
         # Gallery
-        self._load_gallery(name)
+        self.load_gallery(name)
         
         log_activity(f"Viewing person: {name}", "info")
     
-    def _load_gallery(self, name: str):
+    def load_gallery(self, name: str):
         """Load person image gallery"""
         gallery = ctk.CTkScrollableFrame(
             self.details_panel,
@@ -285,7 +285,7 @@ class PersonsPanel(ctk.CTkFrame):
                 return
             
             dialog.destroy()
-            self.after(100, lambda: self._select_photos_for_person(name))
+            self.after(100, lambda: self.select_photos_for_person(name))
         
         btn_frame = ctk.CTkFrame(content, fg_color="transparent")
         btn_frame.pack(pady=Sizes.LG)
@@ -295,7 +295,7 @@ class PersonsPanel(ctk.CTkFrame):
         
         name_entry.focus()
     
-    def _select_photos_for_person(self, name: str):
+    def select_photos_for_person(self, name: str):
         """Select photos for new person"""
         paths = filedialog.askopenfilenames(
             title=f"Select photos for {name}",
@@ -347,7 +347,7 @@ class PersonsPanel(ctk.CTkFrame):
                 security.save_image(dest, img)
         
         self.face_detector.rebuild_embeddings()
-        self._load_gallery(name)
+        self.load_gallery(name)
         
         log_activity(f"Added photos for: {name}", "info")
     
@@ -432,8 +432,8 @@ class PersonsPanel(ctk.CTkFrame):
                 names_file.unlink()
             
             # Reload detector
-            self.face_detector._embeddings = []
-            self.face_detector._names = []
+            self.face_detector.embeddings = []
+            self.face_detector.names = []
             
             # Refresh UI
             self.refresh_list()

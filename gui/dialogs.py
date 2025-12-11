@@ -17,10 +17,10 @@ class AddCameraDialog(ctk.CTkToplevel):
         self.on_success = on_success
         self.result = None
         
-        self._setup_window()
-        self._build_ui()
+        self.setup_window()
+        self.build_ui()
     
-    def _setup_window(self):
+    def setup_window(self):
         """Configure dialog window"""
         self.title("Add Camera")
         self.geometry("500x400")
@@ -41,7 +41,7 @@ class AddCameraDialog(ctk.CTkToplevel):
         
         self.configure(fg_color=Colors.BG_PRIMARY)
     
-    def _build_ui(self):
+    def build_ui(self):
         """Build dialog UI"""
         # Main container
         container = ctk.CTkFrame(self, fg_color=Colors.BG_SECONDARY, corner_radius=Sizes.RADIUS_LG)
@@ -119,29 +119,29 @@ class AddCameraDialog(ctk.CTkToplevel):
         
         create_button(
             btn_frame, "Cancel", "secondary", "medium",
-            command=self._on_cancel
+            command=self.on_cancel
         ).grid(row=0, column=0, padx=(0, Sizes.SM), sticky="ew")
         
         create_button(
             btn_frame, "Add Camera", "success", "medium",
-            command=self._on_add
+            command=self.on_add
         ).grid(row=0, column=1, padx=(Sizes.SM, 0), sticky="ew")
         
         # Bind Enter key
-        self.source_entry.bind("<Return>", lambda e: self._on_add())
+        self.source_entry.bind("<Return>", lambda e: self.on_add())
         self.source_entry.focus()
     
-    def _on_add(self):
+    def on_add(self):
         """Handle add camera"""
         source_str = self.source_entry.get().strip()
         
         if not source_str:
-            self._show_status("Please enter a camera source", Colors.ERROR)
+            self.show_status("Please enter a camera source", Colors.ERROR)
             return
         
         # Add camera using CameraManager's built-in method
         try:
-            self._show_status("Adding camera...", Colors.PRIMARY)
+            self.show_status("Adding camera...", Colors.PRIMARY)
             self.update()
             
             # Use CameraManager's add_camera method
@@ -149,7 +149,7 @@ class AddCameraDialog(ctk.CTkToplevel):
             
             if success:
                 log_activity(message, "success")
-                self._show_status(f"✅ {message}", Colors.SUCCESS)
+                self.show_status(f"✅ {message}", Colors.SUCCESS)
                 
                 # Trigger refresh callback if provided
                 if self.on_success:
@@ -158,15 +158,15 @@ class AddCameraDialog(ctk.CTkToplevel):
                 # Close after delay
                 self.after(1000, self.destroy)
             else:
-                self._show_status(f"❌ Error: {message}", Colors.ERROR)
+                self.show_status(f"❌ Error: {message}", Colors.ERROR)
                 
         except Exception as e:
-            self._show_status(f"❌ Error: {str(e)}", Colors.ERROR)
+            self.show_status(f"❌ Error: {str(e)}", Colors.ERROR)
     
-    def _on_cancel(self):
+    def on_cancel(self):
         """Handle cancel"""
         self.destroy()
     
-    def _show_status(self, message: str, color: str):
+    def show_status(self, message: str, color: str):
         """Show status message"""
         self.status_label.configure(text=message, text_color=color)

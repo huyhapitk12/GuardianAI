@@ -36,16 +36,16 @@ class SettingsPanel(ctk.CTkFrame):
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
         
-        self._build_sidebar()
-        self._build_content()
+        self.build_sidebar()
+        self.build_content()
         
         # Load current values
-        self._load_current_settings()
+        self.load_current_settings()
         
         # Select first tab
-        self.after(100, lambda: self._select_tab("detection"))
+        self.after(100, lambda: self.select_tab("detection"))
     
-    def _build_sidebar(self):
+    def build_sidebar(self):
         """Build navigation sidebar"""
         sidebar = ctk.CTkFrame(self, fg_color=Colors.BG_SECONDARY, width=220, corner_radius=Sizes.RADIUS_LG)
         sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, Sizes.SM))
@@ -91,7 +91,7 @@ class SettingsPanel(ctk.CTkFrame):
                 text_color=Colors.TEXT_SECONDARY,
                 anchor="w",
                 height=40,
-                command=lambda k=key: self._select_tab(k)
+                command=lambda k=key: self.select_tab(k)
             )
             btn.pack(fill="x", padx=Sizes.SM, pady=2)
             self.nav_buttons[key] = btn
@@ -102,15 +102,15 @@ class SettingsPanel(ctk.CTkFrame):
         
         create_button(
             bottom, "💾 Lưu thay đổi", "success",
-            command=self._save_settings
+            command=self.save_settings
         ).pack(fill="x", pady=(0, Sizes.XS))
         
         create_button(
             bottom, "↩️ Khôi phục", "secondary",
-            command=self._reset_settings
+            command=self.reset_settings
         ).pack(fill="x")
     
-    def _build_content(self):
+    def build_content(self):
         """Build content area"""
         self.content = ctk.CTkFrame(self, fg_color="transparent")
         self.content.grid(row=0, column=1, sticky="nsew")
@@ -118,17 +118,17 @@ class SettingsPanel(ctk.CTkFrame):
         self.content.grid_rowconfigure(0, weight=1)
         
         # Create all pages
-        self.pages["detection"] = self._build_detection_page()
-        self.pages["behavior"] = self._build_behavior_page()
-        self.pages["camera"] = self._build_camera_page()
-        self.pages["alerts"] = self._build_alerts_page()
-        self.pages["recording"] = self._build_recording_page()
-        self.pages["telegram"] = self._build_telegram_page()
-        self.pages["ai"] = self._build_ai_page()
-        self.pages["appearance"] = self._build_appearance_page()
-        self.pages["system"] = self._build_system_page()
+        self.pages["detection"] = self.build_detection_page()
+        self.pages["behavior"] = self.build_behavior_page()
+        self.pages["camera"] = self.build_camera_page()
+        self.pages["alerts"] = self.build_alerts_page()
+        self.pages["recording"] = self.build_recording_page()
+        self.pages["telegram"] = self.build_telegram_page()
+        self.pages["ai"] = self.build_ai_page()
+        self.pages["appearance"] = self.build_appearance_page()
+        self.pages["system"] = self.build_system_page()
     
-    def _select_tab(self, key: str):
+    def select_tab(self, key: str):
         """Switch to selected tab"""
         for k, btn in self.nav_buttons.items():
             if k == key:
@@ -146,431 +146,435 @@ class SettingsPanel(ctk.CTkFrame):
     # PAGE BUILDERS
     # =========================================================================
     
-    def _build_detection_page(self) -> ctk.CTkScrollableFrame:
+    def build_detection_page(self) -> ctk.CTkScrollableFrame:
         """Detection settings page"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "Cài đặt Nhận diện", 
+        self.add_header(page, "Cài đặt Nhận diện", 
                         "Điều chỉnh ngưỡng và độ chính xác của các thuật toán nhận diện")
         
         # Person Detection
-        card1 = self._create_section(page, "👤 Nhận diện Người")
+        card1 = self.create_section(page, "👤 Nhận diện Người")
         
-        self._add_slider(card1, "detection.person_confidence", 
+        self.add_switch(card1, "detection.face_recognition_enabled",
+                        "Bật nhận diện khuôn mặt", True,
+                        "Xác định danh tính người trong khung hình")
+        
+        self.add_slider(card1, "detection.person_confidence", 
                         "Ngưỡng phát hiện người", 0.0, 1.0, 0.6,
                         "Độ tin cậy tối thiểu để xác nhận có người trong khung hình")
         
-        self._add_slider(card1, "detection.face_recognition", 
+        self.add_slider(card1, "detection.face_recognition", 
                         "Ngưỡng nhận diện khuôn mặt", 0.0, 1.0, 0.45,
                         "Độ chính xác tối thiểu để nhận ra khuôn mặt đã đăng ký")
         
-        self._add_slider(card1, "detection.face_confirmation_threshold", 
+        self.add_slider(card1, "detection.face_confirmation_threshold", 
                         "Ngưỡng xác nhận danh tính", 0.0, 1.0, 0.5,
                         "Số lần nhận diện liên tiếp để xác nhận chắc chắn")
         
-        self._add_slider(card1, "detection.iou_threshold", 
+        self.add_slider(card1, "detection.iou_threshold", 
                         "Ngưỡng IOU (tracking)", 0.0, 1.0, 0.6,
                         "Độ trùng khớp box để theo dõi cùng một đối tượng")
         
         # Fire Detection
-        card2 = self._create_section(page, "🔥 Phát hiện Cháy")
+        card2 = self.create_section(page, "🔥 Phát hiện Cháy")
         
-        self._add_slider(card2, "detection.fire_confidence", 
+        self.add_slider(card2, "detection.fire_confidence", 
                         "Ngưỡng phát hiện cháy", 0.0, 1.0, 0.85,
                         "Độ tin cậy tối thiểu để cảnh báo cháy")
         
-        self._add_slider(card2, "detection.smoke_confidence", 
+        self.add_slider(card2, "detection.smoke_confidence", 
                         "Ngưỡng phát hiện khói", 0.0, 1.0, 0.7,
                         "Độ tin cậy tối thiểu để phát hiện khói")
         
-        self._add_switch(card2, "detection.fire_filter_enabled",
+        self.add_switch(card2, "detection.fire_filter_enabled",
                         "Bộ lọc nhiễu cháy", True,
                         "Lọc các phát hiện sai do ánh sáng mạnh")
         
         return page
     
-    def _build_behavior_page(self) -> ctk.CTkScrollableFrame:
+    def build_behavior_page(self) -> ctk.CTkScrollableFrame:
         """Behavior analysis settings"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "Phân tích Hành vi", 
+        self.add_header(page, "Phân tích Hành vi", 
                         "Cấu hình phát hiện hành vi bất thường dựa trên pose estimation")
         
-        card1 = self._create_section(page, "🧠 Cài đặt chung")
+        card1 = self.create_section(page, "🧠 Cài đặt chung")
         
-        self._add_switch(card1, "behavior.enabled",
+        self.add_switch(card1, "behavior.enabled",
                         "Bật phân tích hành vi", False,
                         "Kích hoạt tính năng phát hiện hành vi bất thường")
         
-        self._add_slider(card1, "behavior.threshold", 
+        self.add_slider(card1, "behavior.threshold", 
                         "Ngưỡng bất thường", 0.0, 1.0, 0.5,
                         "Điểm số tối thiểu để coi là hành vi bất thường")
         
-        self._add_slider(card1, "behavior.alert_cooldown", 
+        self.add_slider(card1, "behavior.alert_cooldown", 
                         "Thời gian chờ cảnh báo (giây)", 10, 300, 30,
                         "Khoảng thời gian tối thiểu giữa 2 cảnh báo")
         
-        card2 = self._create_section(page, "⚡ Hiệu năng")
+        card2 = self.create_section(page, "⚡ Hiệu năng")
         
-        self._add_slider(card2, "behavior.process_every_n_frames", 
+        self.add_slider(card2, "behavior.process_every_n_frames", 
                         "Xử lý mỗi N frame", 1, 10, 3,
                         "Bỏ qua frame để tăng tốc (cao hơn = nhanh hơn)")
         
-        self._add_slider(card2, "behavior.window_size", 
+        self.add_slider(card2, "behavior.window_size", 
                         "Cửa sổ phân tích (frames)", 32, 128, 64,
                         "Số frame để phân tích một chuỗi hành động")
         
-        self._add_option(card2, "behavior.device",
+        self.add_option(card2, "behavior.device",
                         "Thiết bị xử lý", ["cpu", "cuda"],
                         "Chọn CPU hoặc GPU để xử lý")
         
-        card3 = self._create_section(page, "🎨 Hiển thị")
+        card3 = self.create_section(page, "🎨 Hiển thị")
         
-        self._add_switch(card3, "behavior.show_skeleton",
+        self.add_switch(card3, "behavior.show_skeleton",
                         "Hiển thị skeleton", True,
                         "Vẽ khung xương người lên video")
         
-        self._add_switch(card3, "behavior.show_score",
+        self.add_switch(card3, "behavior.show_score",
                         "Hiển thị điểm số", True,
                         "Hiện điểm hành vi trên box")
         
         return page
     
-    def _build_camera_page(self) -> ctk.CTkScrollableFrame:
+    def build_camera_page(self) -> ctk.CTkScrollableFrame:
         """Camera settings"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "Cài đặt Camera", 
+        self.add_header(page, "Cài đặt Camera", 
                         "Điều chỉnh các thông số camera và xử lý video")
         
-        card1 = self._create_section(page, "📹 Cài đặt chung")
+        card1 = self.create_section(page, "📹 Cài đặt chung")
         
-        self._add_slider(card1, "camera.target_fps", 
+        self.add_slider(card1, "camera.target_fps", 
                         "FPS mục tiêu", 5, 30, 10,
                         "Số khung hình xử lý mỗi giây")
         
-        self._add_slider(card1, "camera.process_every_n_frames", 
+        self.add_slider(card1, "camera.process_every_n_frames", 
                         "Xử lý mỗi N frame", 1, 10, 5,
                         "Bỏ qua frame để tối ưu CPU")
         
-        self._add_slider(card1, "camera.buffer_size", 
+        self.add_slider(card1, "camera.buffer_size", 
                         "Kích thước buffer", 1, 10, 1,
                         "Số frame lưu đệm (thấp = ít delay)")
         
-        card2 = self._create_section(page, "📐 Độ phân giải")
+        card2 = self.create_section(page, "📐 Độ phân giải")
         
-        self._add_option(card2, "camera.process_size",
+        self.add_option(card2, "camera.process_size",
                         "Kích thước xử lý", 
                         ["320x240", "640x480", "960x540", "1280x720"],
                         "Độ phân giải để nhận diện (nhỏ = nhanh)")
         
-        self._add_switch(card2, "camera.auto_resize",
+        self.add_switch(card2, "camera.auto_resize",
                         "Tự động resize", True,
                         "Tự động điều chỉnh kích thước video")
         
-        card3 = self._create_section(page, "🌙 Chế độ Hồng ngoại (IR)")
+        card3 = self.create_section(page, "🌙 Chế độ Hồng ngoại (IR)")
         
-        self._add_switch(card3, "camera.infrared.auto_detect",
+        self.add_switch(card3, "camera.infrared.auto_detect",
                         "Tự động phát hiện IR", True,
                         "Tự động nhận biết khi camera chuyển sang chế độ đêm")
         
-        self._add_slider(card3, "camera.infrared.detection_threshold", 
+        self.add_slider(card3, "camera.infrared.detection_threshold", 
                         "Ngưỡng phát hiện IR", 0.5, 1.0, 0.98,
                         "Độ nhạy phát hiện chế độ IR")
         
-        self._add_slider(card3, "camera.infrared.person_detection_threshold", 
+        self.add_slider(card3, "camera.infrared.person_detection_threshold", 
                         "Ngưỡng người (IR)", 0.3, 0.8, 0.45,
                         "Ngưỡng phát hiện người trong chế độ IR")
         
-        self._add_switch(card3, "camera.infrared.enhance_enabled",
+        self.add_switch(card3, "camera.infrared.enhance_enabled",
                         "Tăng cường IR", False,
                         "Cải thiện chất lượng ảnh hồng ngoại")
         
         return page
     
-    def _build_alerts_page(self) -> ctk.CTkScrollableFrame:
+    def build_alerts_page(self) -> ctk.CTkScrollableFrame:
         """Alert settings"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "Cài đặt Cảnh báo", 
+        self.add_header(page, "Cài đặt Cảnh báo", 
                         "Điều chỉnh tần suất và loại cảnh báo")
         
-        card1 = self._create_section(page, "🔔 Chống spam")
+        card1 = self.create_section(page, "🔔 Chống spam")
         
-        self._add_slider(card1, "spam_guard.debounce_seconds", 
+        self.add_slider(card1, "spam_guard.debounce_seconds", 
                         "Thời gian debounce (giây)", 30, 600, 120,
                         "Khoảng thời gian tối thiểu giữa các cảnh báo cùng loại")
         
-        self._add_slider(card1, "spam_guard.min_interval", 
+        self.add_slider(card1, "spam_guard.min_interval", 
                         "Khoảng cách tối thiểu (giây)", 5, 60, 15,
                         "Thời gian chờ giữa mọi cảnh báo")
         
-        self._add_slider(card1, "spam_guard.max_per_minute", 
+        self.add_slider(card1, "spam_guard.max_per_minute", 
                         "Tối đa mỗi phút", 1, 20, 4,
                         "Số cảnh báo tối đa trong 1 phút")
         
-        card2 = self._create_section(page, "🚨 Loại cảnh báo")
+        card2 = self.create_section(page, "🚨 Loại cảnh báo")
         
-        self._add_switch(card2, "alerts.stranger_enabled",
+        self.add_switch(card2, "alerts.stranger_enabled",
                         "Cảnh báo người lạ", True,
                         "Gửi thông báo khi phát hiện người không quen")
         
-        self._add_switch(card2, "alerts.known_person_enabled",
+        self.add_switch(card2, "alerts.known_person_enabled",
                         "Thông báo người quen", True,
                         "Gửi thông báo khi nhận ra người đã đăng ký")
         
-        self._add_switch(card2, "alerts.fire_enabled",
+        self.add_switch(card2, "alerts.fire_enabled",
                         "Cảnh báo cháy", True,
                         "Gửi thông báo khi phát hiện cháy/khói")
         
-        self._add_switch(card2, "alerts.anomaly_enabled",
+        self.add_switch(card2, "alerts.anomaly_enabled",
                         "Cảnh báo hành vi bất thường", True,
                         "Gửi thông báo khi phát hiện hành vi lạ")
         
-        card3 = self._create_section(page, "🔊 Còi báo động")
+        card3 = self.create_section(page, "🔊 Còi báo động")
         
-        self._add_switch(card3, "alarm.auto_play_fire",
+        self.add_switch(card3, "alarm.auto_play_fire",
                         "Tự động bật còi khi cháy", True,
                         "Bật còi sau khi không có phản hồi")
         
-        self._add_slider(card3, "alarm.response_timeout", 
-                        "Thời gian chờ phản hồi (giây)", 10, 120, 30,
-                        "Thời gian chờ trước khi tự động bật còi")
-        
-        self._add_slider(card3, "alarm.volume", 
+        self.add_slider(card3, "alarm.volume", 
                         "Âm lượng còi", 0.0, 1.0, 0.8,
                         "Độ to của còi báo động")
         
+        self.add_slider(card3, "alarm.response_timeout", 
+                        "Thời gian chờ phản hồi (giây)", 10, 120, 30,
+                        "Thời gian chờ trước khi tự động bật còi")
+        
         return page
     
-    def _build_recording_page(self) -> ctk.CTkScrollableFrame:
+    def build_recording_page(self) -> ctk.CTkScrollableFrame:
         """Recording settings"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "Cài đặt Ghi hình", 
+        self.add_header(page, "Cài đặt Ghi hình", 
                         "Cấu hình video ghi lại khi có sự kiện")
         
-        card1 = self._create_section(page, "⏺️ Cài đặt chung")
+        card1 = self.create_section(page, "⏺️ Cài đặt chung")
         
-        self._add_switch(card1, "recorder.enabled",
+        self.add_switch(card1, "recorder.enabled",
                         "Bật ghi hình", True,
                         "Tự động ghi video khi có cảnh báo")
         
-        self._add_slider(card1, "recorder.duration", 
+        self.add_slider(card1, "recorder.duration", 
                         "Thời lượng (giây)", 5, 60, 15,
                         "Độ dài video ghi lại")
         
-        self._add_slider(card1, "recorder.pre_buffer", 
+        self.add_slider(card1, "recorder.pre_buffer", 
                         "Ghi trước (giây)", 0, 10, 3,
                         "Số giây ghi trước khi sự kiện xảy ra")
         
-        card2 = self._create_section(page, "🎬 Chất lượng")
+        card2 = self.create_section(page, "🎬 Chất lượng")
         
-        self._add_option(card2, "recorder.codec",
+        self.add_option(card2, "recorder.codec",
                         "Codec video", 
                         ["mp4v", "XVID", "H264", "avc1"],
                         "Định dạng nén video")
         
-        self._add_slider(card2, "recorder.fps", 
+        self.add_slider(card2, "recorder.fps", 
                         "FPS ghi hình", 10, 30, 15,
                         "Số khung hình mỗi giây của video")
         
-        self._add_option(card2, "recorder.quality",
+        self.add_option(card2, "recorder.quality",
                         "Chất lượng", 
                         ["low", "medium", "high", "original"],
                         "Độ phân giải video lưu")
         
-        card3 = self._create_section(page, "💾 Lưu trữ")
+        card3 = self.create_section(page, "💾 Lưu trữ")
         
-        self._add_slider(card3, "recorder.max_files", 
+        self.add_slider(card3, "recorder.max_files", 
                         "Số file tối đa", 10, 500, 100,
                         "Tự động xóa file cũ khi vượt quá")
         
-        self._add_slider(card3, "recorder.max_size_mb", 
+        self.add_slider(card3, "recorder.max_size_mb", 
                         "Dung lượng tối đa (MB)", 100, 10000, 1000,
                         "Xóa file cũ khi vượt dung lượng")
         
-        self._add_switch(card3, "recorder.encrypt",
+        self.add_switch(card3, "recorder.encrypt",
                         "Mã hóa video", True,
                         "Mã hóa video để bảo mật")
         
         return page
     
-    def _build_telegram_page(self) -> ctk.CTkScrollableFrame:
+    def build_telegram_page(self) -> ctk.CTkScrollableFrame:
         """Telegram bot settings"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "Cài đặt Telegram", 
+        self.add_header(page, "Cài đặt Telegram", 
                         "Cấu hình bot và thông báo Telegram")
         
-        card1 = self._create_section(page, "🤖 Thông tin Bot")
+        card1 = self.create_section(page, "🤖 Thông tin Bot")
         
-        self._add_text_input(card1, "telegram.bot_token",
+        self.add_text_input(card1, "telegram.bot_token",
                             "Bot Token", "Nhập token từ @BotFather",
                             is_password=True)
         
-        self._add_text_input(card1, "telegram.chat_id",
+        self.add_text_input(card1, "telegram.chat_id",
                             "Chat ID", "ID của cuộc trò chuyện")
         
-        card2 = self._create_section(page, "📤 Gửi tin nhắn")
+        card2 = self.create_section(page, "📤 Gửi tin nhắn")
         
-        self._add_slider(card2, "telegram.response_timeout", 
+        self.add_slider(card2, "telegram.response_timeout", 
                         "Thời gian chờ phản hồi (giây)", 10, 120, 30,
                         "Thời gian chờ user phản hồi cảnh báo")
         
-        self._add_switch(card2, "telegram.send_video",
+        self.add_switch(card2, "telegram.send_video",
                         "Gửi video kèm", True,
                         "Gửi video clip cùng với ảnh cảnh báo")
         
-        self._add_switch(card2, "telegram.silent_known_person",
+        self.add_switch(card2, "telegram.silent_known_person",
                         "Im lặng với người quen", False,
                         "Không phát âm thanh khi thông báo người quen")
         
-        card3 = self._create_section(page, "❤️ Heartbeat")
+        card3 = self.create_section(page, "❤️ Heartbeat")
         
-        self._add_switch(card3, "telegram.heartbeat_enabled",
+        self.add_switch(card3, "telegram.heartbeat_enabled",
                         "Bật heartbeat", True,
                         "Gửi tin nhắn định kỳ để xác nhận hệ thống hoạt động")
         
-        self._add_slider(card3, "telegram.heartbeat_interval", 
+        self.add_slider(card3, "telegram.heartbeat_interval", 
                         "Khoảng cách (phút)", 5, 60, 30,
                         "Thời gian giữa các heartbeat")
         
         return page
     
-    def _build_ai_page(self) -> ctk.CTkScrollableFrame:
+    def build_ai_page(self) -> ctk.CTkScrollableFrame:
         """AI Assistant settings"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "AI Assistant", 
+        self.add_header(page, "AI Assistant", 
                         "Cấu hình trợ lý AI thông minh")
         
-        card1 = self._create_section(page, "🤖 Cài đặt chung")
+        card1 = self.create_section(page, "🤖 Cài đặt chung")
         
-        self._add_switch(card1, "ai.enabled",
+        self.add_switch(card1, "ai.enabled",
                         "Bật AI Assistant", True,
                         "Kích hoạt tính năng trả lời thông minh")
         
-        self._add_option(card1, "ai.provider",
+        self.add_option(card1, "ai.provider",
                         "Nhà cung cấp AI", 
                         ["openai", "anthropic", "google", "local"],
                         "Chọn API AI để sử dụng")
         
-        self._add_text_input(card1, "ai.api_key",
+        self.add_text_input(card1, "ai.api_key",
                             "API Key", "Nhập API key",
                             is_password=True)
         
-        card2 = self._create_section(page, "⚙️ Tham số mô hình")
+        card2 = self.create_section(page, "⚙️ Tham số mô hình")
         
-        self._add_option(card2, "ai.model",
+        self.add_option(card2, "ai.model",
                         "Mô hình", 
                         ["gpt-4o-mini", "gpt-4o", "gpt-4-turbo", "claude-3-sonnet", "gemini-pro"],
                         "Model AI sử dụng")
         
-        self._add_slider(card2, "ai.temperature", 
+        self.add_slider(card2, "ai.temperature", 
                         "Temperature", 0.0, 2.0, 0.5,
                         "Độ sáng tạo của AI (cao = ngẫu nhiên hơn)")
         
-        self._add_slider(card2, "ai.max_tokens", 
+        self.add_slider(card2, "ai.max_tokens", 
                         "Max tokens", 64, 4096, 512,
                         "Độ dài tối đa của phản hồi")
         
-        card3 = self._create_section(page, "💬 Ngữ cảnh")
+        card3 = self.create_section(page, "💬 Ngữ cảnh")
         
-        self._add_slider(card3, "ai.context_messages", 
+        self.add_slider(card3, "ai.context_messages", 
                         "Số tin nhắn ngữ cảnh", 1, 20, 10,
                         "Số tin nhắn gần nhất để AI nhớ")
         
-        self._add_slider(card3, "ai.context_timeout", 
+        self.add_slider(card3, "ai.context_timeout", 
                         "Timeout ngữ cảnh (phút)", 5, 120, 30,
                         "Xóa ngữ cảnh sau thời gian không hoạt động")
         
         return page
     
-    def _build_appearance_page(self) -> ctk.CTkScrollableFrame:
+    def build_appearance_page(self) -> ctk.CTkScrollableFrame:
         """Appearance settings"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "Giao diện", 
+        self.add_header(page, "Giao diện", 
                         "Tùy chỉnh giao diện hiển thị")
         
-        card1 = self._create_section(page, "🎨 Theme")
+        card1 = self.create_section(page, "🎨 Theme")
         
-        self._add_option(card1, "appearance.theme",
+        self.add_option(card1, "appearance.theme",
                         "Chủ đề", 
                         ["dark", "light", "system"],
                         "Chế độ màu của ứng dụng")
         
-        self._add_option(card1, "appearance.accent_color",
+        self.add_option(card1, "appearance.accent_color",
                         "Màu nhấn", 
                         ["blue", "green", "purple", "orange", "red"],
                         "Màu chủ đạo của giao diện")
         
-        card2 = self._create_section(page, "📹 Video Display")
+        card2 = self.create_section(page, "📹 Video Display")
         
-        self._add_switch(card2, "appearance.show_fps",
+        self.add_switch(card2, "appearance.show_fps",
                         "Hiển thị FPS", False,
                         "Hiện số khung hình/giây trên video")
         
-        self._add_switch(card2, "appearance.show_timestamp",
+        self.add_switch(card2, "appearance.show_timestamp",
                         "Hiển thị thời gian", True,
                         "Hiện timestamp trên video")
         
-        self._add_switch(card2, "appearance.show_detection_info",
+        self.add_switch(card2, "appearance.show_detection_info",
                         "Hiển thị thông tin nhận diện", True,
                         "Hiện box và label trên video")
         
-        card3 = self._create_section(page, "📊 Dashboard")
+        card3 = self.create_section(page, "📊 Dashboard")
         
-        self._add_switch(card3, "appearance.show_activity_feed",
+        self.add_switch(card3, "appearance.show_activity_feed",
                         "Hiển thị Activity Feed", True,
                         "Hiện bảng hoạt động gần đây")
         
-        self._add_slider(card3, "appearance.activity_max_items", 
+        self.add_slider(card3, "appearance.activity_max_items", 
                         "Số hoạt động hiển thị", 10, 100, 50,
                         "Số mục tối đa trong Activity Feed")
         
         return page
     
-    def _build_system_page(self) -> ctk.CTkScrollableFrame:
+    def build_system_page(self) -> ctk.CTkScrollableFrame:
         """System settings"""
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
-        self._add_header(page, "Cài đặt Hệ thống", 
+        self.add_header(page, "Cài đặt Hệ thống", 
                         "Quản lý tài nguyên và dữ liệu")
         
-        card1 = self._create_section(page, "💾 Bộ nhớ")
+        card1 = self.create_section(page, "💾 Bộ nhớ")
         
-        self._add_slider(card1, "system.memory_limit_mb", 
+        self.add_slider(card1, "system.memory_limit_mb", 
                         "Giới hạn RAM (MB)", 512, 8192, 2048,
                         "Dung lượng RAM tối đa sử dụng")
         
-        self._add_slider(card1, "system.cleanup_interval", 
+        self.add_slider(card1, "system.cleanup_interval", 
                         "Dọn dẹp mỗi (phút)", 5, 60, 15,
                         "Tần suất giải phóng bộ nhớ")
         
-        self._add_switch(card1, "system.auto_gc",
+        self.add_switch(card1, "system.auto_gc",
                         "Tự động dọn rác", True,
                         "Tự động thu gom bộ nhớ không dùng")
         
-        card2 = self._create_section(page, "📁 Đường dẫn")
+        card2 = self.create_section(page, "📁 Đường dẫn")
         
-        self._add_path_input(card2, "paths.data_dir",
+        self.add_path_input(card2, "paths.data_dir",
                             "Thư mục dữ liệu", str(settings.paths.data_dir))
         
-        self._add_path_input(card2, "paths.tmp_dir",
+        self.add_path_input(card2, "paths.tmp_dir",
                             "Thư mục tạm", str(settings.paths.tmp_dir))
         
-        self._add_path_input(card2, "paths.model_dir",
+        self.add_path_input(card2, "paths.model_dir",
                             "Thư mục model", str(settings.paths.model_dir))
         
-        card3 = self._create_section(page, "🔧 Nâng cao")
+        card3 = self.create_section(page, "🔧 Nâng cao")
         
-        self._add_switch(card3, "system.debug_mode",
+        self.add_switch(card3, "system.debug_mode",
                         "Chế độ Debug", False,
                         "Hiển thị thông tin debug chi tiết")
         
-        self._add_switch(card3, "system.log_to_file",
+        self.add_switch(card3, "system.log_to_file",
                         "Ghi log ra file", True,
                         "Lưu log vào file để kiểm tra sau")
         
@@ -580,12 +584,12 @@ class SettingsPanel(ctk.CTkFrame):
         
         create_button(
             actions, "🗑️ Xóa dữ liệu tạm", "danger",
-            command=self._clear_temp_data
+            command=self.clear_temp_data
         ).pack(side="left", padx=(0, Sizes.SM))
         
         create_button(
             actions, "📊 Rebuild Embeddings", "secondary",
-            command=self._rebuild_embeddings
+            command=self.rebuild_embeddings
         ).pack(side="left")
         
         return page
@@ -594,7 +598,7 @@ class SettingsPanel(ctk.CTkFrame):
     # HELPER METHODS
     # =========================================================================
     
-    def _add_header(self, parent, title: str, subtitle: str):
+    def add_header(self, parent, title: str, subtitle: str):
         """Add page header"""
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", pady=(0, Sizes.MD))
@@ -604,7 +608,7 @@ class SettingsPanel(ctk.CTkFrame):
         ctk.CTkLabel(frame, text=subtitle, font=Fonts.BODY, 
                     text_color=Colors.TEXT_MUTED).pack(anchor="w")
     
-    def _create_section(self, parent, title: str) -> ctk.CTkFrame:
+    def create_section(self, parent, title: str) -> ctk.CTkFrame:
         """Create a section card"""
         card = create_card(parent)
         card.pack(fill="x", pady=(0, Sizes.MD))
@@ -614,7 +618,7 @@ class SettingsPanel(ctk.CTkFrame):
         
         return card
     
-    def _add_slider(self, parent, key: str, label: str, 
+    def add_slider(self, parent, key: str, label: str, 
                    min_val: float, max_val: float, default: float,
                    description: str = ""):
         """Add slider setting"""
@@ -661,7 +665,7 @@ class SettingsPanel(ctk.CTkFrame):
         slider.configure(command=on_change)
         self.setting_vars[key]["widget"] = slider
     
-    def _add_switch(self, parent, key: str, label: str, default: bool, description: str = ""):
+    def add_switch(self, parent, key: str, label: str, default: bool, description: str = ""):
         """Add switch setting"""
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
@@ -692,7 +696,7 @@ class SettingsPanel(ctk.CTkFrame):
         switch.pack(side="right")
         self.setting_vars[key]["widget"] = switch
     
-    def _add_option(self, parent, key: str, label: str, options: list, description: str = ""):
+    def add_option(self, parent, key: str, label: str, options: list, description: str = ""):
         """Add option menu setting"""
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
@@ -726,7 +730,7 @@ class SettingsPanel(ctk.CTkFrame):
         menu.pack(side="right")
         self.setting_vars[key]["widget"] = menu
     
-    def _add_text_input(self, parent, key: str, label: str, placeholder: str, is_password: bool = False):
+    def add_text_input(self, parent, key: str, label: str, placeholder: str, is_password: bool = False):
         """Add text input setting"""
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
@@ -754,7 +758,7 @@ class SettingsPanel(ctk.CTkFrame):
         
         self.setting_vars[key] = {"widget": entry, "type": "text"}
     
-    def _add_path_input(self, parent, key: str, label: str, current: str):
+    def add_path_input(self, parent, key: str, label: str, current: str):
         """Add path input with browse button"""
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
@@ -784,7 +788,7 @@ class SettingsPanel(ctk.CTkFrame):
                 self.has_changes.set(True)
         
         create_button(input_frame, "📂", "secondary", "small", 
-                     width=40, command=browse).pack(side="right")
+                      width=40, command=browse).pack(side="right")
         
         self.setting_vars[key] = {"widget": entry, "type": "path"}
     
@@ -792,14 +796,14 @@ class SettingsPanel(ctk.CTkFrame):
     # ACTIONS
     # =========================================================================
     
-    def _load_current_settings(self):
+    def load_current_settings(self):
         """Load current settings values"""
         for key, data in self.setting_vars.items():
             current = settings.get(key)
             if current is not None:
                 self.original_values[key] = current
     
-    def _save_settings(self):
+    def save_settings(self):
         """Save all settings"""
         try:
             changes = {}
@@ -862,7 +866,7 @@ class SettingsPanel(ctk.CTkFrame):
                 icon="cancel"
             )
     
-    def _reset_settings(self):
+    def reset_settings(self):
         """Reset to default values"""
         result = CTkMessagebox(
             title="Xác nhận",
@@ -920,7 +924,7 @@ class SettingsPanel(ctk.CTkFrame):
             icon="check"
         )
     
-    def _clear_temp_data(self):
+    def clear_temp_data(self):
         """Clear temporary data"""
         result = CTkMessagebox(
             title="Xác nhận",
@@ -962,7 +966,7 @@ class SettingsPanel(ctk.CTkFrame):
                 icon="cancel"
             )
     
-    def _rebuild_embeddings(self):
+    def rebuild_embeddings(self):
         """Rebuild face embeddings"""
         CTkMessagebox(
             title="Thông báo",

@@ -1,6 +1,14 @@
-"""Behavior/Anomaly detection with pose estimation"""
+# core/detection/behavior.py
+# =============================================================================
+# MODULE PHÂN TÍCH HÀNH VI - BEHAVIOR ANALYSIS
+# =============================================================================
+# Module này dùng AI để phát hiện hành vi bất thường (như ngã, đánh nhau...)
+# Cách hoạt động:
+# 1. Trích xuất bộ xương (skeleton/pose) từ video bằng MediaPipe
+# 2. Đưa chuỗi chuyển động của bộ xương vào mạng AI (LSTM)
+# 3. AI sẽ chấm điểm "bất thường" (0.0 - 1.0)
+# =============================================================================
 
-from __future__ import annotations
 import time
 import cv2
 import numpy as np
@@ -9,8 +17,8 @@ import torch.nn as nn
 import torch.nn.functional as F
 from collections import deque
 from dataclasses import dataclass
-from typing import Optional, Tuple, List, Dict
 
+# Import MediaPipe (thư viện trích xuất bộ xương)
 try:
     import mediapipe as mp
     MEDIAPIPE_AVAILABLE = True
@@ -21,61 +29,67 @@ except ImportError:
 from config import settings
 
 
-# ============================================================================
-# DATA CLASSES
-# ============================================================================
+# =============================================================================
+# CẤU TRÚC DỮ LIỆU
+# =============================================================================
 
 @dataclass
 class PoseResult:
-    """Pose extraction result"""
-    keypoints: Optional[np.ndarray]  # (17, 2) COCO format
-    confidence: Optional[np.ndarray]  # (17,)
-    bbox: Optional[Tuple[int, int, int, int]]
+    """Kết quả trích xuất bộ xương"""
+    keypoints: any       # Tọa độ các khớp (mũi, vai, khuỷu tay...)
+    confidence: any      # Độ tin cậy của từng khớp
+    bbox: any            # Hình chữ nhật bao quanh người
     
     @property
-    def is_valid(self) -> bool:
+    def is_valid(self):
+        # Kiểm tra dữ liệu có hợp lệ không
         return self.keypoints is not None and not np.isnan(self.keypoints).any()
 
 
 @dataclass
 class BehaviorResult:
-    """Behavior analysis result"""
-    score: float
-    is_anomaly: bool
-    pose: Optional[PoseResult]
-    segment_scores: Optional[np.ndarray] = None
+    """Kết quả phân tích hành vi"""
+    score: float         # Điểm bất thường (0.0 - 1.0)
+    is_anomaly: bool     # Có phải bất thường không?
+    pose: any            # Dữ liệu bộ xương (để vẽ lên hình)
+    segment_scores: any = None
     timestamp: float = 0.0
 
 
-# ============================================================================
-# MODEL
-# ============================================================================
+# =============================================================================
+# MÔ HÌNH AI (NEURAL NETWORK)
+# =============================================================================
+# Phần này định nghĩa kiến trúc mạng AI
+# Sử dụng LSTM (Long Short-Term Memory) để hiểu chuỗi thời gian
+# =============================================================================
 
 class TemporalAttention(nn.Module):
-    """Temporal attention mechanism"""
+    """Cơ chế chú ý (Attention) - giúp AI tập trung vào đoạn quan trọng"""
     
-    def __init__(self, dim: int):
+    def __init__(self, dim):
         super().__init__()
         self.query = nn.Linear(dim, dim)
         self.key = nn.Linear(dim, dim)
         self.value = nn.Linear(dim, dim)
         self.scale = np.sqrt(dim)
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
         Q = self.query(x)
         K = self.key(x)
         V = self.value(x)
         
+        # Tính toán độ chú ý
         attn = F.softmax(torch.bmm(Q, K.transpose(1, 2)) / self.scale, dim=-1)
         return torch.bmm(attn, V)
 
 
 class DeepMIL(nn.Module):
-    """Deep Multiple Instance Learning for anomaly detection"""
+    """Mạng chính để phát hiện bất thường"""
     
-    def __init__(self, input_dim: int = 68, hidden_dim: int = 256, dropout: float = 0.3):
+    def __init__(self, input_dim=68, hidden_dim=256, dropout=0.3):
         super().__init__()
         
+        # Mã hóa thông tin đầu vào
         self.encoder = nn.Sequential(
             nn.Linear(input_dim, hidden_dim),
             nn.LayerNorm(hidden_dim),
@@ -83,16 +97,19 @@ class DeepMIL(nn.Module):
             nn.Dropout(dropout)
         )
         
+        # LSTM để học chuỗi thời gian (chuyển động)
         self.lstm = nn.LSTM(
             hidden_dim, hidden_dim,
             num_layers=2,
             batch_first=True,
-            bidirectional=True,
+            bidirectional=True,  # Học cả 2 chiều (quá khứ <-> tương lai trong cửa sổ)
             dropout=dropout
         )
         
+        # Cơ chế chú ý
         self.attention = TemporalAttention(hidden_dim * 2)
         
+        # Bộ phân loại đưa ra điểm số cuối cùng
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, 256),
             nn.ReLU(),
@@ -101,56 +118,58 @@ class DeepMIL(nn.Module):
             nn.ReLU(),
             nn.Dropout(dropout),
             nn.Linear(64, 1),
-            nn.Sigmoid()
+            nn.Sigmoid()  # Đưa về đoạn [0, 1]
         )
         
-        self._init_weights()
+        self.init_weights()
     
-    def _init_weights(self):
+    def init_weights(self):
+        """Khởi tạo trọng số ngẫu nhiên"""
         for m in self.modules():
             if isinstance(m, nn.Linear):
                 nn.init.xavier_uniform_(m.weight)
                 if m.bias is not None:
                     nn.init.zeros_(m.bias)
     
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
+        """Tính toán kết quả"""
         x = self.encoder(x)
         x, _ = self.lstm(x)
         x = self.attention(x)
         return self.classifier(x).squeeze(-1)
 
 
-# ============================================================================
-# POSE EXTRACTION
-# ============================================================================
+# =============================================================================
+# TRÍCH XUẤT BỘ XƯƠNG (POSE EXTRACTION)
+# =============================================================================
 
 class PoseExtractor:
-    """Extract COCO-format keypoints using MediaPipe"""
+    """Sử dụng MediaPipe để lấy tọa độ các khớp xương"""
     
-    # MediaPipe to COCO keypoint mapping
+    # Bản đồ ánh xạ từ MediaPipe sang chuẩn COCO (17 điểm)
     MP_TO_COCO = {
-        0: 0,    # nose
-        2: 1,    # left_eye
-        5: 2,    # right_eye
-        7: 3,    # left_ear
-        8: 4,    # right_ear
-        11: 5,   # left_shoulder
-        12: 6,   # right_shoulder
-        13: 7,   # left_elbow
-        14: 8,   # right_elbow
-        15: 9,   # left_wrist
-        16: 10,  # right_wrist
-        23: 11,  # left_hip
-        24: 12,  # right_hip
-        25: 13,  # left_knee
-        26: 14,  # right_knee
-        27: 15,  # left_ankle
-        28: 16,  # right_ankle
+        0: 0,    # Mũi
+        2: 1,    # Mắt trái
+        5: 2,    # Mắt phải
+        7: 3,    # Tai trái
+        8: 4,    # Tai phải
+        11: 5,   # Vai trái
+        12: 6,   # Vai phải
+        13: 7,   # Khuỷu tay trái
+        14: 8,   # Khuỷu tay phải
+        15: 9,   # Cổ tay trái
+        16: 10,  # Cổ tay phải
+        23: 11,  # Hông trái
+        24: 12,  # Hông phải
+        25: 13,  # Đầu gối trái
+        26: 14,  # Đầu gối phải
+        27: 15,  # Cổ chân trái
+        28: 16,  # Cổ chân phải
     }
     
-    def __init__(self, model_complexity: int = 1):
+    def __init__(self, model_complexity=1):
         if not MEDIAPIPE_AVAILABLE:
-            raise RuntimeError("MediaPipe not available")
+            raise RuntimeError("Chưa cài đặt MediaPipe!")
         
         self.mp_pose = mp.solutions.pose
         self.pose = self.mp_pose.Pose(
@@ -160,11 +179,11 @@ class PoseExtractor:
             min_tracking_confidence=0.5
         )
     
-    def extract(self, frame: np.ndarray) -> PoseResult:
-        """Extract pose from frame"""
+    def extract(self, frame):
+        """Trích xuất bộ xương từ ảnh"""
         h, w = frame.shape[:2]
         
-        # Convert BGR to RGB
+        # MediaPipe cần ảnh RGB
         rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
         results = self.pose.process(rgb)
         
@@ -175,12 +194,14 @@ class PoseExtractor:
         keypoints = np.zeros((17, 2), dtype=np.float32)
         confidence = np.zeros(17, dtype=np.float32)
         
+        # Chuyển đổi sang chuẩn COCO
         for mp_idx, coco_idx in self.MP_TO_COCO.items():
             lm = landmarks[mp_idx]
+            # MediaPipe trả về tọa độ chuẩn hóa (0-1), cần nhân với kích thước ảnh
             keypoints[coco_idx] = [lm.x * w, lm.y * h]
             confidence[coco_idx] = lm.visibility
         
-        # Compute bbox
+        # Tính bounding box bao quanh người
         valid_pts = keypoints[confidence > 0.5]
         if len(valid_pts) > 0:
             margin = 20
@@ -198,31 +219,35 @@ class PoseExtractor:
         return PoseResult(keypoints, confidence, bbox)
     
     def close(self):
-        self.pose.close()
+        try:
+            self.pose.close()
+        except:
+            pass
 
 
-# ============================================================================
-# FEATURE PROCESSING
-# ============================================================================
+# =============================================================================
+# XỬ LÝ ĐẶC TRƯNG (FEATURE PROCESSING)
+# =============================================================================
 
 class TrajectoryProcessor:
-    """Convert keypoint sequences to model features"""
+    """Chuyển đổi chuỗi chuyển động thành đặc trưng để đưa vào AI"""
     
-    def __init__(self, num_segments: int = 32, feature_dim: int = 68):
+    def __init__(self, num_segments=32, feature_dim=68):
         self.num_segments = num_segments
         self.feature_dim = feature_dim
     
-    def process(self, keypoints_seq: np.ndarray) -> Optional[np.ndarray]:
-        """Process keypoint sequence into features"""
+    def process(self, keypoints_seq):
+        """Xử lý chuỗi keypoints"""
         if keypoints_seq is None or len(keypoints_seq) < 2:
             return None
         
         try:
-            # Normalize by hip center
+            # 1. Chuẩn hóa vị trí (đưa về gốc tọa độ là hông)
             hip_center = (keypoints_seq[:, 11, :] + keypoints_seq[:, 12, :]) / 2.0
             normalized = keypoints_seq - hip_center[:, None, :]
             
-            # Scale by shoulder distance
+            # 2. Chuẩn hóa kích thước (chia cho chiều rộng vai)
+            # Để người to hay nhỏ thì AI đều hiểu như nhau
             shoulder_dist = np.linalg.norm(
                 keypoints_seq[:, 5, :] - keypoints_seq[:, 6, :],
                 axis=1, keepdims=True
@@ -230,18 +255,19 @@ class TrajectoryProcessor:
             scale = np.clip(np.mean(shoulder_dist), 1e-6, None)
             normalized = normalized / scale
             
-            # Compute velocity
+            # 3. Tính vận tốc (độ thay đổi vị trí giữa các frame)
             velocity = np.zeros_like(normalized)
             velocity[1:] = normalized[1:] - normalized[:-1]
             
-            # Concatenate: (T, 34) + (T, 34) = (T, 68)
+            # 4. Gộp vị trí và vận tốc lại
+            # (Thời gian, 34 điểm) + (Thời gian, 34 điểm) = (Thời gian, 68 điểm)
             features = np.concatenate([
                 normalized.reshape(-1, 34),
                 velocity.reshape(-1, 34)
             ], axis=1)
             
-            # Segment into fixed length
-            segments = self._segment(features)
+            # 5. Chia thành các đoạn cố định (Segment)
+            segments = self.segment_features(features)
             
             if np.isnan(segments).any() or np.isinf(segments).any():
                 return None
@@ -251,16 +277,18 @@ class TrajectoryProcessor:
         except Exception:
             return None
     
-    def _segment(self, features: np.ndarray) -> np.ndarray:
-        """Segment features into fixed number of segments"""
+    def segment_features(self, features):
+        """Chia features thành số lượng đoạn cố định (để input vào AI có kích thước cố định)"""
         T = features.shape[0]
         segments = np.zeros((self.num_segments, self.feature_dim), dtype=np.float32)
         
         if T <= self.num_segments:
+            # Nếu ít frame, lấy mẫu đều
             indices = np.linspace(0, T - 1, self.num_segments)
             for i, idx in enumerate(indices):
                 segments[i] = features[int(idx)]
         else:
+            # Nếu nhiều frame, chia đều và tính trung bình mỗi đoạn
             splits = np.array_split(np.arange(T), self.num_segments)
             for i, split in enumerate(splits):
                 if len(split) > 0:
@@ -270,20 +298,21 @@ class TrajectoryProcessor:
 
 
 class SlidingWindowBuffer:
-    """Buffer for sliding window analysis"""
+    """Bộ đệm trượt - Lưu các frame gần nhất để phân tích"""
     
-    def __init__(self, window_size: int = 64, stride: int = 16, num_segments: int = 32):
-        self.window_size = window_size
-        self.stride = stride
+    def __init__(self, window_size=64, stride=16, num_segments=32):
+        self.window_size = window_size  # Kích thước cửa sổ (số frame)
+        self.stride = stride            # Bước nhảy
         self.buffer = deque(maxlen=window_size)
         self.frame_count = 0
         self.processor = TrajectoryProcessor(num_segments)
     
-    def add(self, keypoints: np.ndarray) -> Optional[np.ndarray]:
-        """Add keypoints and return features if ready"""
+    def add(self, keypoints):
+        """Thêm keypoints mới và trả về features nếu đủ dữ liệu"""
         self.buffer.append(keypoints)
         self.frame_count += 1
         
+        # Nếu đủ frame và đến lúc kiểm tra
         if len(self.buffer) >= self.window_size and self.frame_count % self.stride == 0:
             keypoints_array = np.array(list(self.buffer))
             return self.processor.process(keypoints_array)
@@ -295,69 +324,63 @@ class SlidingWindowBuffer:
         self.frame_count = 0
 
 
-# ============================================================================
-# VISUALIZATION
-# ============================================================================
+# =============================================================================
+# TRỰC QUAN HÓA (VISUALIZATION)
+# =============================================================================
 
 class BehaviorVisualizer:
-    """Draw pose and anomaly visualization"""
+    """Vẽ bộ xương và điểm số lên màn hình"""
     
-    # COCO skeleton connections
+    # Các đường nối bộ xương (để vẽ line)
     SKELETON = [
-        (0, 1), (0, 2), (1, 3), (2, 4),  # Head
-        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # Arms
-        (5, 11), (6, 12), (11, 12),  # Torso
-        (11, 13), (13, 15), (12, 14), (14, 16)  # Legs
+        (0, 1), (0, 2), (1, 3), (2, 4),      # Đầu
+        (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # Tay
+        (5, 11), (6, 12), (11, 12),          # Thân
+        (11, 13), (13, 15), (12, 14), (14, 16)   # Chân
     ]
     
-    def __init__(self, threshold: float = 0.5):
+    def __init__(self, threshold=0.5):
         self.threshold = threshold
     
-    def get_color(self, score: float) -> Tuple[int, int, int]:
-        """Get color based on anomaly score"""
+    def get_color(self, score):
+        """Lấy màu dựa trên điểm bất thường"""
         if score >= self.threshold:
-            return (0, 0, 255)  # Red - anomaly
+            return (0, 0, 255)    # Đỏ - Bất thường
         elif score >= 0.3:
-            return (0, 165, 255)  # Orange - suspicious
-        return (0, 255, 0)  # Green - normal
+            return (0, 165, 255)  # Cam - Nghi ngờ
+        return (0, 255, 0)        # Xanh - Bình thường
     
-    def draw_skeleton(
-        self,
-        frame: np.ndarray,
-        keypoints: np.ndarray,
-        confidence: np.ndarray,
-        color: Tuple[int, int, int] = (0, 255, 0)
-    ):
-        """Draw skeleton on frame"""
-        # Draw bones
+    def draw_skeleton(self, frame, keypoints, confidence, color=(0, 255, 0)):
+        """Vẽ bộ xương"""
+        # Vẽ xương
         for i, j in self.SKELETON:
             if confidence[i] > 0.3 and confidence[j] > 0.3:
                 pt1 = tuple(keypoints[i].astype(int))
                 pt2 = tuple(keypoints[j].astype(int))
                 cv2.line(frame, pt1, pt2, color, 2)
         
-        # Draw joints
+        # Vẽ khớp
         for pt, conf in zip(keypoints, confidence):
             if conf > 0.3:
                 center = tuple(pt.astype(int))
                 cv2.circle(frame, center, 4, color, -1)
                 cv2.circle(frame, center, 4, (255, 255, 255), 1)
     
-    def draw_score(self, frame: np.ndarray, score: float, is_anomaly: bool):
-        """Draw anomaly score on frame"""
+    def draw_score(self, frame, score, is_anomaly):
+        """Vẽ điểm số"""
         color = (0, 0, 255) if is_anomaly else (0, 255, 0)
         
-        # Score text
-        text = f"Behavior: {score:.2f}"
+        # Vẽ điểm
+        text = f"Hanh vi: {score:.2f}"
         cv2.putText(frame, text, (10, 60), cv2.FONT_HERSHEY_SIMPLEX, 0.6, color, 2)
         
-        # Warning if anomaly
+        # Cảnh báo nếu bất thường
         if is_anomaly:
-            cv2.putText(frame, "⚠ ANOMALY DETECTED", (10, 90),
+            cv2.putText(frame, "⚠ PHAT HIEN BAT THUONG", (10, 90),
                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
     
-    def draw_timeline(self, frame: np.ndarray, segment_scores: np.ndarray):
-        """Draw temporal score timeline"""
+    def draw_timeline(self, frame, segment_scores):
+        """Vẽ biểu đồ timeline ở dưới đáy màn hình"""
         if segment_scores is None:
             return
         
@@ -374,32 +397,32 @@ class BehaviorVisualizer:
             color = self.get_color(score)
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, -1)
         
-        # Border
+        # Viền
         cv2.rectangle(frame, (20, y1), (w - 20, y2), (255, 255, 255), 1)
 
 
-# ============================================================================
-# MAIN DETECTOR
-# ============================================================================
+# =============================================================================
+# CLASS CHÍNH: BehaviorAnalyzer
+# =============================================================================
+# Class này kết hợp tất cả các thành phần trên
+# 1. PoseExtractor -> Lấy xương
+# 2. SlidingWindowBuffer -> Lấy chuỗi chuyển động
+# 3. Model -> Chấm điểm
+# 4. Visualizer -> Vẽ kết quả
+# =============================================================================
 
 class BehaviorAnalyzer:
-    """Complete behavior analysis pipeline"""
     
+    # Tiết kiệm RAM
     __slots__ = (
         'device', 'threshold', 'model', 'loaded',
         'pose_extractor', 'buffer', 'visualizer',
         'current_score', 'current_segments', 'current_pose',
-        '_last_alert_time', '_alert_cooldown'
+        'last_alert_time', 'alert_cooldown'
     )
     
-    def __init__(
-        self,
-        model_path: str,
-        device: str = 'cpu',
-        threshold: float = 0.5,
-        window_size: int = 64,
-        stride: int = 16
-    ):
+    def __init__(self, model_path, device='cpu', threshold=0.5, window_size=64, stride=16):
+        # Chọn thiết bị chạy (CPU/CUDA)
         self.device = torch.device(device if torch.cuda.is_available() else 'cpu')
         self.threshold = threshold
         self.loaded = False
@@ -408,28 +431,30 @@ class BehaviorAnalyzer:
         self.current_segments = None
         self.current_pose = None
         
-        self._last_alert_time = 0
-        self._alert_cooldown = settings.get('behavior.alert_cooldown', 30)
+        self.last_alert_time = 0
+        self.alert_cooldown = settings.get('behavior.alert_cooldown', 30)
         
-        # Load model
+        # Tạo và nạp model
         self.model = DeepMIL(input_dim=68, hidden_dim=256, dropout=0.3)
-        self._load_model(model_path)
+        self.load_model(model_path)
         
-        # Components
+        # Khởi tạo bộ trích xuất xương
         if MEDIAPIPE_AVAILABLE:
             self.pose_extractor = PoseExtractor(model_complexity=1)
         else:
             self.pose_extractor = None
-            print("⚠️ MediaPipe not available - behavior analysis disabled")
+            print("⚠️ Không có MediaPipe - Tắt tính năng phân tích hành vi")
         
         self.buffer = SlidingWindowBuffer(window_size, stride, num_segments=32)
         self.visualizer = BehaviorVisualizer(threshold)
     
-    def _load_model(self, model_path: str):
-        """Load pre-trained model"""
+    def load_model(self, model_path):
+        """Nạp model đã train sẵn"""
         try:
+            # Tải checkpoint
             checkpoint = torch.load(model_path, map_location=self.device, weights_only=False)
             
+            # Xử lý các định dạng checkpoint khác nhau
             if isinstance(checkpoint, dict):
                 if 'model_state_dict' in checkpoint:
                     self.model.load_state_dict(checkpoint['model_state_dict'])
@@ -441,38 +466,40 @@ class BehaviorAnalyzer:
                 self.model.load_state_dict(checkpoint)
             
             self.model.to(self.device)
-            self.model.eval()
+            self.model.eval()  # Chuyển sang chế độ đánh giá (evaluation)
             self.loaded = True
-            print(f"✅ Behavior model loaded from {model_path}")
+            print(f"✅ Đã tải model hành vi: {model_path}")
             
         except Exception as e:
-            print(f"❌ Behavior model load failed: {e}")
+            print(f"❌ Lỗi tải model hành vi: {e}")
             self.loaded = False
     
-    def process_frame(self, frame: np.ndarray) -> BehaviorResult:
-        """Process single frame
-        
-        Returns:
-            BehaviorResult with score and pose info
+    def process_frame(self, frame):
+        """
+        Xử lý một frame video
+        Trả về kết quả phân tích
         """
         if not self.loaded or self.pose_extractor is None:
             return BehaviorResult(0.0, False, None)
         
-        # Extract pose
+        # 1. Trích xuất xương
         pose = self.pose_extractor.extract(frame)
         self.current_pose = pose
         
         if not pose.is_valid:
+            # Nếu không thấy người, giữ nguyên điểm cũ hoặc trả về 0
             return BehaviorResult(self.current_score, False, pose)
         
-        # Add to buffer
+        # 2. Thêm vào bộ đệm và lấy features
         features = self.buffer.add(pose.keypoints)
         
-        # Run inference if ready
+        # 3. Nếu đủ dữ liệu, chạy model AI
         if features is not None:
             with torch.no_grad():
                 x = torch.FloatTensor(features).unsqueeze(0).to(self.device)
-                self.current_segments = self.model(x).squeeze(0).cpu().numpy()
+                results = self.model(x).squeeze(0).cpu().numpy()
+                self.current_segments = results
+                # Lấy điểm cao nhất trong chuỗi
                 self.current_score = float(self.current_segments.max())
         
         is_anomaly = self.current_score >= self.threshold
@@ -485,12 +512,12 @@ class BehaviorAnalyzer:
             timestamp=time.time()
         )
     
-    def draw_on_frame(self, frame: np.ndarray, result: BehaviorResult = None):
-        """Draw visualization on frame"""
+    def draw_on_frame(self, frame, result=None):
+        """Vẽ kết quả lên màn hình"""
         if result is None:
             result = BehaviorResult(self.current_score, self.current_score >= self.threshold, self.current_pose)
         
-        # Draw skeleton
+        # Vẽ xương
         if result.pose and result.pose.is_valid:
             color = self.visualizer.get_color(result.score)
             self.visualizer.draw_skeleton(
@@ -500,31 +527,32 @@ class BehaviorAnalyzer:
                 color
             )
         
-        # Draw score
+        # Vẽ điểm số
         self.visualizer.draw_score(frame, result.score, result.is_anomaly)
         
-        # Draw timeline
+        # Vẽ timeline
         if result.segment_scores is not None:
             self.visualizer.draw_timeline(frame, result.segment_scores)
     
-    def should_alert(self) -> bool:
-        """Check if should trigger alert (respects cooldown)"""
+    def should_alert(self):
+        """Kiểm tra có nên gửi cảnh báo không (dựa trên cooldown)"""
         now = time.time()
-        if now - self._last_alert_time >= self._alert_cooldown:
+        if now - self.last_alert_time >= self.alert_cooldown:
             if self.current_score >= self.threshold:
-                self._last_alert_time = now
+                self.last_alert_time = now
                 return True
         return False
     
     def reset(self):
-        """Reset state"""
+        """Reset trạng thái"""
         self.buffer.reset()
         self.current_score = 0.0
         self.current_segments = None
         self.current_pose = None
     
     def close(self):
-        """Cleanup resources"""
+        """Giải phóng tài nguyên"""
         if self.pose_extractor:
             self.pose_extractor.close()
+            self.pose_extractor = None
         self.reset()

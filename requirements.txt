@@ -4,10 +4,5 @@ Pillow
 pygame
 ultralytics
 python-telegram-bot
-openai
-CTkMessagebox
-cryptography
-core\lib\insightface-0.7.3-cp312-cp312-win_amd64.whl
-core\lib\trackers-2.0.2rc0-py3-none-any.whl
 onnxruntime
-mediapipe
+psutil

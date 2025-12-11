@@ -48,13 +48,13 @@ camera:
   process_size:
   - 1280
   - 720
-  sources: 0, 90f05763955815c08bcea804f4739e6a_20251017132745403_wh[16-9]wh_di[BF8500984]di_cn[1]cn_trans.mp4
+  sources: [0]
   target_fps: 10
 detection:
-  face_recognition_threshold: 0.45
+  face_recognition_threshold: 0.55
   fire_confidence_threshold: 0.85
   global_enabled: true
-  iou_threshold: 0.15
+  iou_threshold: 0.5
   person_confidence_threshold: 0.6
   smoke_confidence_threshold: 0.8
 fire_logic:
@@ -110,8 +110,8 @@ telegram:
   user_response_window_seconds: 30
   video_preview_limit_mb: 48.0
 tracker:
-  face_recognition_cooldown: 1.0
-  known_person_confirm_frames: 2
+  face_recognition_cooldown: 3.0
+  known_person_confirm_frames: 4
   stranger_confirm_frames: 20
   timeout_seconds: 2.0
   video_preview_limit_mb: 48.0

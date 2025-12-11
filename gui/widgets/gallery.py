@@ -12,6 +12,7 @@ from typing import Optional
 from PIL import Image
 import customtkinter as ctk
 from customtkinter import CTkImage
+from customtkinter import CTkScrollableFrame
 
 from config import settings
 from utils import security
@@ -23,7 +24,7 @@ class GalleryPanel(ctk.CTkFrame):
     
     __slots__ = (
         'list_frame', 'preview', 'info_label', 'play_btn', 'controls',
-        'playing', 'temp_file', 'stop_event', 'current_frame', '_image_ref'
+        'playing', 'temp_file', 'stop_event', 'current_frame', 'image_ref'
     )
     
     def __init__(self, parent, **kwargs):
@@ -33,17 +34,17 @@ class GalleryPanel(ctk.CTkFrame):
         self.temp_file: Optional[Path] = None
         self.stop_event = threading.Event()
         self.current_frame = 0
-        self._image_ref = None
+        self.image_ref = None
         
         self.grid_columnconfigure(0, weight=1)
         self.grid_columnconfigure(1, weight=3)
         self.grid_rowconfigure(0, weight=1)
         
-        self._build_list_panel()
-        self._build_preview_panel()
+        self.build_list_panel()
+        self.build_preview_panel()
         self.refresh()
     
-    def _build_list_panel(self):
+    def build_list_panel(self):
         """Build file list panel"""
         panel = create_card(self)
         panel.grid(row=0, column=0, sticky="nsew", padx=(0, Sizes.SM))
@@ -56,10 +57,10 @@ class GalleryPanel(ctk.CTkFrame):
         create_button(header, "🔄", "ghost", "small", width=32, command=self.refresh).pack(side="right")
         
         # List
-        self.list_frame = ctk.CTkScrollableFrame(panel, fg_color="transparent")
+        self.list_frame = CTkScrollableFrame(panel, fg_color="transparent")
         self.list_frame.pack(fill="both", expand=True)
     
-    def _build_preview_panel(self):
+    def build_preview_panel(self):
         """Build preview panel"""
         panel = create_card(self)
         panel.grid(row=0, column=1, sticky="nsew")
@@ -132,30 +133,30 @@ class GalleryPanel(ctk.CTkFrame):
     
     def load(self, item: dict):
         """Load selected item"""
-        self._cleanup()
+        self.cleanup()
         self.info_label.configure(text=item['name'])
-        self._set_preview(text="Loading...")
+        self.set_preview(text="Loading...")
         
         def load_thread():
             try:
                 if item['type'] == 'image':
                     self.after(0, lambda: self.controls.grid_remove())
-                    self._load_image(item['path'])
+                    self.load_image(item['path'])
                 else:
                     self.after(0, lambda: self.controls.grid())
                     self.after(0, lambda: self.play_btn.configure(text="▶ Play"))
-                    self._load_video(item['path'])
+                    self.load_video(item['path'])
             except Exception as e:
                 print(f"Load error: {e}")
-                self._set_preview(text="Error loading file")
+                self.set_preview(text="Error loading file")
         
         threading.Thread(target=load_thread, daemon=True).start()
     
-    def _load_image(self, path: Path):
+    def load_image(self, path: Path):
         """Load image file"""
         img = security.load_image(path)
         if img is None:
-            self._set_preview(text="Failed to load image")
+            self.set_preview(text="Failed to load image")
             return
         
         img_rgb = cv2.cvtColor(img, cv2.COLOR_BGR2RGB)
@@ -170,19 +171,19 @@ class GalleryPanel(ctk.CTkFrame):
                 pil_img.thumbnail((w, h))
             
             ctk_img = CTkImage(pil_img, size=pil_img.size)
-            self._image_ref = ctk_img
-            self._set_preview(image=ctk_img, text="")
+            self.image_ref = ctk_img
+            self.set_preview(image=ctk_img, text="")
         
         self.after(0, update_ui)
     
-    def _load_video(self, path: Path):
+    def load_video(self, path: Path):
         """Load video file"""
         self.current_frame = 0
         
         # Decrypt to temp file
         data = security.decrypt_file(path)
         if not data:
-            self._set_preview(text="Failed to decrypt video")
+            self.set_preview(text="Failed to decrypt video")
             return
         
         self.temp_file = settings.paths.tmp_dir / f"temp_{uuid.uuid4().hex}.mp4"
@@ -206,21 +207,21 @@ class GalleryPanel(ctk.CTkFrame):
                 
                 pil_img.thumbnail((640, 480))
                 ctk_img = CTkImage(pil_img, size=pil_img.size)
-                self._image_ref = ctk_img
-                self._set_preview(image=ctk_img, text="")
+                self.image_ref = ctk_img
+                self.set_preview(image=ctk_img, text="")
             
             self.after(0, update_ui)
         else:
-            self._set_preview(text="Failed to load video")
+            self.set_preview(text="Failed to load video")
     
     def toggle_play(self):
         """Toggle video playback"""
         if self.playing:
-            self._pause()
+            self.pause()
         else:
-            self._play()
+            self.play()
     
-    def _play(self):
+    def play(self):
         """Start playback"""
         if not self.temp_file or not self.temp_file.exists():
             return
@@ -229,14 +230,14 @@ class GalleryPanel(ctk.CTkFrame):
         self.play_btn.configure(text="⏸ Pause")
         self.stop_event.clear()
         
-        threading.Thread(target=self._playback_loop, daemon=True).start()
+        threading.Thread(target=self.playback_loop, daemon=True).start()
     
-    def _pause(self):
+    def pause(self):
         """Pause playback"""
         self.playing = False
         self.stop_event.set()
     
-    def _playback_loop(self):
+    def playback_loop(self):
         """Video playback loop"""
         cap = cv2.VideoCapture(str(self.temp_file))
         
@@ -273,8 +274,8 @@ class GalleryPanel(ctk.CTkFrame):
             
             try:
                 ctk_img = CTkImage(pil_img, size=pil_img.size)
-                self._image_ref = ctk_img
-                self._set_preview(image=ctk_img)
+                self.image_ref = ctk_img
+                self.set_preview(image=ctk_img)
             except Exception:
                 cap.release()
                 return
@@ -283,20 +284,20 @@ class GalleryPanel(ctk.CTkFrame):
         
         self.after(0, update_frame)
     
-    def _set_preview(self, **kwargs):
+    def set_preview(self, **kwargs):
         """Safely update preview"""
         try:
             self.preview.configure(**kwargs)
         except Exception:
             pass
     
-    def _cleanup(self):
+    def cleanup(self):
         """Cleanup resources"""
-        self._pause()
+        self.pause()
         self.current_frame = 0
-        self._image_ref = None
+        self.image_ref = None
         
-        self._set_preview(image=None, text="")
+        self.set_preview(image=None, text="")
         
         if self.temp_file and self.temp_file.exists():
             try:
@@ -306,5 +307,5 @@ class GalleryPanel(ctk.CTkFrame):
         self.temp_file = None
     
     def destroy(self):
-        self._cleanup()
+        self.cleanup()
         super().destroy()

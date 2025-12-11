@@ -34,9 +34,9 @@ class CameraCard(ctk.CTkFrame):
         self.labels = {}
         self.switches = {}
         
-        self._build_ui()
+        self.build_ui()
     
-    def _build_ui(self):
+    def build_ui(self):
         # Header row
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=Sizes.MD, pady=(Sizes.MD, Sizes.SM))
@@ -52,7 +52,7 @@ class CameraCard(ctk.CTkFrame):
         
         create_switch(
             header, "Detect", det_var,
-            command=lambda: self._toggle_detection()
+            command=lambda: self.toggle_detection()
         ).pack(side="right")
         
         # Status dot
@@ -85,7 +85,7 @@ class CameraCard(ctk.CTkFrame):
         ctk.CTkSwitch(
             ir_row, text="Enhance", variable=ir_var,
             onvalue="on", offvalue="off",
-            command=lambda: self._toggle_ir(),
+            command=lambda: self.toggle_ir(),
             font=Fonts.TINY, progress_color=Colors.WARNING,
             width=70, height=20
         ).pack(side="right")
@@ -102,25 +102,25 @@ class CameraCard(ctk.CTkFrame):
         
         create_button(
             actions, "⟳", "secondary", "small",
-            width=32, command=self._reconnect
+            width=32, command=self.reconnect
         ).pack(side="right")
         
         # Progress bar
         self.labels['progress'] = ctk.CTkProgressBar(self, height=4, progress_color=Colors.SUCCESS)
         self.labels['progress'].pack(fill="x", padx=Sizes.MD, pady=(0, Sizes.SM))
     
-    def _toggle_detection(self):
+    def toggle_detection(self):
         enabled = self.switches['detect'].get() == "on"
         self.state.set_detection(enabled, self.source)
         log_activity(f"Detection {'enabled' if enabled else 'disabled'} for Camera {self.source}",
                     "success" if enabled else "warning")
     
-    def _toggle_ir(self):
+    def toggle_ir(self):
         if hasattr(self.camera, 'set_ir_enhancement'):
             enabled = self.switches['ir'].get() == "on"
             self.camera.set_ir_enhancement(enabled)
     
-    def _reconnect(self):
+    def reconnect(self):
         if self.camera:
             self.camera.force_reconnect()
             log_activity(f"Reconnecting Camera {self.source}", "info")
@@ -180,10 +180,10 @@ class CameraList(ctk.CTkFrame):
         self.on_add = on_add
         self.cards: Dict[str, CameraCard] = {}
         
-        self._build_ui()
-        self._start_monitor()
+        self.build_ui()
+        self.start_monitor()
     
-    def _build_ui(self):
+    def build_ui(self):
         # Header
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=Sizes.SM, pady=(Sizes.SM, 0))
@@ -211,11 +211,11 @@ class CameraList(ctk.CTkFrame):
                 card.pack(fill="x", padx=Sizes.SM, pady=Sizes.XS)
                 self.cards[source] = card
     
-    def _start_monitor(self):
+    def start_monitor(self):
         """Start status monitoring loop"""
-        self._update_status()
+        self.update_status()
     
-    def _update_status(self):
+    def update_status(self):
         """Update all camera statuses"""
         try:
             for card in self.cards.values():
@@ -223,7 +223,7 @@ class CameraList(ctk.CTkFrame):
         except Exception as e:
             print(f"Status update error: {e}")
         
-        self.after(2000, self._update_status)
+        self.after(2000, self.update_status)
     
     def add_camera(self, source: str, camera):
         """Add new camera card"""

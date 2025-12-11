@@ -47,9 +47,12 @@ class Settings:
     def _process_special_values(self):
         """Process special config values (e.g., camera.sources)"""
         if 'camera' in self._config and 'sources' in self._config['camera']:
-            sources_str = self._config['camera']['sources']
-            if isinstance(sources_str, str):
-                self._config['camera']['sources'] = [s.strip() for s in sources_str.split(',')]
+            sources_val = self._config['camera']['sources']
+            if isinstance(sources_val, str):
+                self._config['camera']['sources'] = [s.strip() for s in sources_val.split(',')]
+            elif not isinstance(sources_val, list):
+                # Handle int or other single values
+                self._config['camera']['sources'] = [sources_val]
 
     def _create_dynamic_enums(self):
         """Create dynamic Enums (kept in source for clarity)"""

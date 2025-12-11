@@ -31,13 +31,13 @@ class GuardianApp:
         self.panels = {}
         self.current_tab = "cameras"
         
-        self._setup_window()
-        self._build_ui()
+        self.setup_window()
+        self.build_ui()
         
         log_system("GUI initialized", "success")
         log_activity("Guardian started", "success")
     
-    def _setup_window(self):
+    def setup_window(self):
         """Configure window"""
         set_appearance_mode("dark")
         
@@ -49,7 +49,7 @@ class GuardianApp:
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
     
-    def _build_ui(self):
+    def build_ui(self):
         """Build main UI"""
         # Main container
         container = ctk.CTkFrame(self.root, fg_color=Colors.BG_PRIMARY)
@@ -66,7 +66,7 @@ class GuardianApp:
             segmented_button_unselected_hover_color=Colors.BG_ELEVATED,
             text_color=Colors.TEXT_PRIMARY,
             corner_radius=Sizes.RADIUS_LG,
-            command=self._on_tab_change
+            command=self.on_tab_change
         )
         self.tabs.pack(fill="both", expand=True, padx=Sizes.MD, pady=Sizes.MD)
         self.tabs._segmented_button.configure(font=Fonts.BODY_BOLD, height=40)
@@ -96,7 +96,7 @@ class GuardianApp:
         )
         self.panels['settings'].pack(fill="both", expand=True)
     
-    def _on_tab_change(self):
+    def on_tab_change(self):
         """Handle tab change"""
         selected = self.tabs.get()
         

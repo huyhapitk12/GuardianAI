@@ -33,7 +33,7 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 
-def _get_session() -> requests.Session:
+def get_session() -> requests.Session:
     """Create session with retry"""
     session = requests.Session()
     retry = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
@@ -63,7 +63,7 @@ def send_photo(chat_id: str, photo_path: str, caption: str = "",
             if reply_markup:
                 payload['reply_markup'] = json.dumps(reply_markup)
             
-            response = _get_session().post(url, files=files, data=payload, timeout=30)
+            response = get_session().post(url, files=files, data=payload, timeout=30)
             
             if not isinstance(files['photo'], tuple):
                 files['photo'].close()
@@ -100,7 +100,7 @@ def send_video(chat_id: str, video_path: str, caption: str = "") -> bool:
             files = {'video' if endpoint == 'sendVideo' else 'document': open(video_path, 'rb')}
         
         payload = {'chat_id': chat_id, 'caption': caption}
-        response = _get_session().post(url, files=files, data=payload, timeout=60)
+        response = get_session().post(url, files=files, data=payload, timeout=60)
         
         return response.status_code == 200
         
@@ -112,7 +112,7 @@ def send_video(chat_id: str, video_path: str, caption: str = "") -> bool:
 class AIAssistant:
     """AI-powered chat assistant"""
     
-    __slots__ = ('_client', '_history', 'enabled')
+    __slots__ = ('client', 'history', 'enabled')
     
     SYSTEM_PROMPT = """Bạn là Guardian Bot - trợ lý bảo mật thông minh.
 Trả lời ngắn gọn bằng tiếng Việt.
@@ -120,12 +120,12 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
     
     def __init__(self):
         self.enabled = settings.ai.enabled
-        self._client = None
-        self._history: Dict[str, list] = {}
+        self.client = None
+        self.history: Dict[str, list] = {}
         
         if self.enabled and OPENAI_AVAILABLE and AsyncOpenAI:
             try:
-                self._client = AsyncOpenAI(
+                self.client = AsyncOpenAI(
                     base_url=settings.ai.api_base,
                     api_key=settings.ai.api_key,
                     timeout=settings.telegram.httpx_timeout
@@ -135,15 +135,15 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
     
     async def process(self, chat_id: str, message: str) -> Tuple[str, Optional[str]]:
         """Process message and return (reply, action)"""
-        if not self.enabled or not self._client:
-            return self._simple_response(message), None
+        if not self.enabled or not self.client:
+            return self.simple_response(message), None
         
         try:
-            return await self._llm_response(chat_id, message)
+            return await self.llm_response(chat_id, message)
         except Exception as e:
             return f"Lỗi: {e}", None
     
-    def _simple_response(self, message: str) -> str:
+    def simple_response(self, message: str) -> str:
         """Simple keyword-based response"""
         msg = message.lower()
         
@@ -158,9 +158,9 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         
         return "AI không khả dụng."
     
-    async def _llm_response(self, chat_id: str, message: str) -> Tuple[str, Optional[str]]:
+    async def llm_response(self, chat_id: str, message: str) -> Tuple[str, Optional[str]]:
         """LLM-based response"""
-        history = self._history.get(chat_id, [])
+        history = self.history.get(chat_id, [])
         
         messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
         for item in history[-10:]:
@@ -168,7 +168,7 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
             messages.append({"role": role, "content": item["content"]})
         messages.append({"role": "user", "content": message})
         
-        response = await self._client.chat.completions.create(
+        response = await self.client.chat.completions.create(
             model=settings.ai.model,
             messages=messages,
             max_tokens=settings.ai.max_tokens,
@@ -187,22 +187,22 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         # Update history
         history.append({"role": "user", "content": message})
         history.append({"role": "model", "content": reply})
-        self._history[chat_id] = history[-20:]
+        self.history[chat_id] = history[-20:]
         
         return reply, action
     
     def add_context(self, chat_id: str, message: str):
         """Add system context to history"""
-        if chat_id not in self._history:
-            self._history[chat_id] = []
-        self._history[chat_id].append({"role": "system", "content": message})
+        if chat_id not in self.history:
+            self.history[chat_id] = []
+        self.history[chat_id].append({"role": "system", "content": message})
     
     def clear(self, chat_id: str):
         """Clear chat history"""
-        self._history.pop(chat_id, None)
+        self.history.pop(chat_id, None)
 
 
-def _create_alert_keyboard(alert_id: str, is_fire: bool = False):
+def create_alert_keyboard(alert_id: str, is_fire: bool = False):
     """Create inline keyboard for alerts"""
     if not TELEGRAM_AVAILABLE:
         return None
@@ -225,49 +225,49 @@ def _create_alert_keyboard(alert_id: str, is_fire: bool = False):
 class GuardianBot:
     """Telegram bot for Guardian system"""
     
-    __slots__ = ('_app', '_ai', '_alarm', '_snapshot_fn', '_camera_mgr',
-                 '_response_queue', '_quit')
+    __slots__ = ('app', 'ai', 'alarm', 'snapshot_fn', 'camera_mgr',
+                 'response_queue', 'quit')
     
     def __init__(self, ai_assistant: AIAssistant, alarm_player, 
                  snapshot_fn: Callable, camera_manager, response_queue):
-        self._ai = ai_assistant
-        self._alarm = alarm_player
-        self._snapshot_fn = snapshot_fn
-        self._camera_mgr = camera_manager
-        self._response_queue = response_queue
-        self._quit = False
-        self._app = None
+        self.ai = ai_assistant
+        self.alarm = alarm_player
+        self.snapshot_fn = snapshot_fn
+        self.camera_mgr = camera_manager
+        self.response_queue = response_queue
+        self.quit = False
+        self.app = None
         
         if not TELEGRAM_AVAILABLE:
             print("⚠️ Telegram not available")
             return
         
-        self._app = Application.builder().token(settings.telegram.token).build()
-        self._setup_handlers()
+        self.app = Application.builder().token(settings.telegram.token).build()
+        self.setup_handlers()
     
-    def _setup_handlers(self):
+    def setup_handlers(self):
         """Setup command handlers"""
         handlers = [
-            CommandHandler("start", self._cmd_start),
-            CommandHandler("status", self._cmd_status),
-            CommandHandler("detect", self._cmd_detect),
-            CommandHandler("alarm", self._cmd_alarm),
-            CommandHandler("get_image", self._cmd_image),
-            MessageHandler(filters.TEXT & ~filters.COMMAND, self._on_message),
-            CallbackQueryHandler(self._on_callback),
+            CommandHandler("start", self.cmd_start),
+            CommandHandler("status", self.cmd_status),
+            CommandHandler("detect", self.cmd_detect),
+            CommandHandler("alarm", self.cmd_alarm),
+            CommandHandler("get_image", self.cmd_image),
+            MessageHandler(filters.TEXT & ~filters.COMMAND, self.on_message),
+            CallbackQueryHandler(self.on_callback),
         ]
         for h in handlers:
-            self._app.add_handler(h)
+            self.app.add_handler(h)
     
-    async def _cmd_start(self, update: Update, context: Any):
+    async def cmd_start(self, update: Update, context: Any):
         await update.message.reply_text("🛡️ Guardian Bot sẵn sàng!\n/status, /detect, /get_image, /alarm")
     
-    async def _cmd_status(self, update: Update, context: Any):
+    async def cmd_status(self, update: Update, context: Any):
         enabled = "🟢" if state_manager.is_detection_enabled() else "🔴"
         alerts = len(state_manager.list_alerts())
         await update.message.reply_text(f"📊 Trạng thái\nPhát hiện: {enabled}\nCảnh báo: {alerts}")
     
-    async def _cmd_detect(self, update: Update, context: Any):
+    async def cmd_detect(self, update: Update, context: Any):
         if context.args:
             cam_id = context.args[0]
             current = state_manager.is_detection_enabled(cam_id)
@@ -278,33 +278,33 @@ class GuardianBot:
             status = "🟢" if state_manager.is_detection_enabled() else "🔴"
             await update.message.reply_text(f"Phát hiện: {status}\nDùng /detect <id> để bật/tắt camera")
     
-    async def _cmd_alarm(self, update: Update, context: Any):
-        if self._alarm and hasattr(self._alarm, 'is_alarm_playing') and self._alarm.is_alarm_playing:
-            self._alarm.stop()
+    async def cmd_alarm(self, update: Update, context: Any):
+        if self.alarm and hasattr(self.alarm, 'is_alarm_playing') and self.alarm.is_alarm_playing:
+            self.alarm.stop()
             await update.message.reply_text("✅ Đã tắt báo động")
         else:
-            if self._alarm:
-                self._alarm.play()
+            if self.alarm:
+                self.alarm.play()
             await update.message.reply_text("🚨 Đã bật báo động")
     
-    async def _cmd_image(self, update: Update, context: Any):
+    async def cmd_image(self, update: Update, context: Any):
         source = context.args[0] if context.args else None
         await update.message.reply_text("📸 Đang chụp...")
-        self._snapshot_fn(str(update.message.chat_id), source)
+        self.snapshot_fn(str(update.message.chat_id), source)
     
-    async def _on_message(self, update: Update, context: Any):
+    async def on_message(self, update: Update, context: Any):
         text = update.message.text.strip()
         chat_id = str(update.message.chat_id)
         
-        reply, action = await self._ai.process(chat_id, text)
+        reply, action = await self.ai.process(chat_id, text)
         
         if action:
-            await self._execute_action(action, chat_id)
+            await self.execute_action(action, chat_id)
         
         if reply:
             await update.message.reply_text(reply)
     
-    async def _execute_action(self, action: str, chat_id: str):
+    async def execute_action(self, action: str, chat_id: str):
         try:
             code = ActionCode[action]
             if code == ActionCode.TOGGLE_ON:
@@ -312,15 +312,15 @@ class GuardianBot:
             elif code == ActionCode.TOGGLE_OFF:
                 state_manager.set_detection(False)
             elif code == ActionCode.GET_IMAGE:
-                self._snapshot_fn(chat_id)
-            elif code == ActionCode.ALARM_ON and self._alarm:
-                self._alarm.play()
-            elif code == ActionCode.ALARM_OFF and self._alarm:
-                self._alarm.stop()
+                self.snapshot_fn(chat_id)
+            elif code == ActionCode.ALARM_ON and self.alarm:
+                self.alarm.play()
+            elif code == ActionCode.ALARM_OFF and self.alarm:
+                self.alarm.stop()
         except Exception:
             pass
     
-    async def _on_callback(self, update: Update, context: Any):
+    async def on_callback(self, update: Update, context: Any):
         query = update.callback_query
         await query.answer()
         
@@ -328,8 +328,8 @@ class GuardianBot:
         action, alert_id = data.split(":", 1)
         
         # Stop alarm
-        if self._alarm:
-            self._alarm.stop()
+        if self.alarm:
+            self.alarm.stop()
         
         # Resolve alert
         state_manager.resolve_alert(alert_id, f"user:{action}")
@@ -338,20 +338,20 @@ class GuardianBot:
         caption = query.message.caption or ""
         
         if "fire_real" in action:
-            if self._alarm:
-                self._alarm.play()
+            if self.alarm:
+                self.alarm.play()
             caption += "\n✅ XÁC NHẬN CÓ CHÁY!"
         elif "fire_false" in action:
             caption += "\n❌ Báo động giả"
         elif "person_yes" in action:
             caption += "\n✅ Người quen"
             # Put response in queue
-            self._response_queue.put({"alert_id": alert_id, "decision": "yes"})
+            self.response_queue.put({"alert_id": alert_id, "decision": "yes"})
         elif "person_no" in action:
-            if self._alarm:
-                self._alarm.play()
+            if self.alarm:
+                self.alarm.play()
             caption += "\n❌ NGƯỜI LẠ!"
-            self._response_queue.put({"alert_id": alert_id, "decision": "no"})
+            self.response_queue.put({"alert_id": alert_id, "decision": "no"})
         
         await query.edit_message_caption(caption=caption)
     
@@ -361,7 +361,7 @@ class GuardianBot:
         if not TELEGRAM_AVAILABLE:
             return
         
-        kb = _create_alert_keyboard(alert_id, is_fire)
+        kb = create_alert_keyboard(alert_id, is_fire)
         markup = kb.to_dict() if kb else None
         
         threading.Thread(
@@ -378,39 +378,39 @@ class GuardianBot:
         text = f"❤️ Guardian hoạt động\nPhát hiện: {status}"
         
         threading.Thread(
-            target=self._send_text,
+            target=self.send_text,
             args=(settings.telegram.chat_id, text),
             daemon=True
         ).start()
     
-    def _send_text(self, chat_id: str, text: str):
+    def send_text(self, chat_id: str, text: str):
         try:
             url = f"https://api.telegram.org/bot{settings.telegram.token}/sendMessage"
-            _get_session().post(url, data={'chat_id': chat_id, 'text': text}, timeout=10)
+            get_session().post(url, data={'chat_id': chat_id, 'text': text}, timeout=10)
         except Exception:
             pass
     
     def run(self):
         """Run bot"""
-        if not TELEGRAM_AVAILABLE or not self._app:
+        if not TELEGRAM_AVAILABLE or not self.app:
             return
         
         loop = asyncio.new_event_loop()
         asyncio.set_event_loop(loop)
-        loop.run_until_complete(self._run_async())
+        loop.run_until_complete(self.run_async())
     
-    async def _run_async(self):
-        await self._app.initialize()
-        await self._app.start()
-        await self._app.updater.start_polling(drop_pending_updates=True)
+    async def run_async(self):
+        await self.app.initialize()
+        await self.app.start()
+        await self.app.updater.start_polling(drop_pending_updates=True)
         
-        while not self._quit:
+        while not self.quit:
             await asyncio.sleep(1)
         
         # Proper shutdown sequence: stop updater first, then stop app, then shutdown
-        await self._app.updater.stop()
-        await self._app.stop()
-        await self._app.shutdown()
+        await self.app.updater.stop()
+        await self.app.stop()
+        await self.app.shutdown()
     
     def stop(self):
-        self._quit = True
+        self.quit = True

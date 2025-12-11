@@ -21,7 +21,7 @@ class CamerasPanel(ctk.CTkFrame):
     
     __slots__ = (
         'camera_manager', 'state', 'selected_camera', 'video_label',
-        'camera_list', 'brightness', '_running'
+        'camera_list', 'brightness', 'running'
     )
     
     def __init__(self, parent, camera_manager, state_manager, **kwargs):
@@ -31,17 +31,17 @@ class CamerasPanel(ctk.CTkFrame):
         self.state = state_manager
         self.selected_camera = StringVar()
         self.brightness = 1.0
-        self._running = True
+        self.running = True
         
         # Get camera sources
         sources = list(camera_manager.cameras.keys()) if camera_manager else []
         if sources:
             self.selected_camera.set(sources[0])
         
-        self._build_ui()
-        self._start_video_loop()
+        self.build_ui()
+        self.start_video_loop()
     
-    def _build_ui(self):
+    def build_ui(self):
         self.grid_columnconfigure(0, weight=3)
         self.grid_columnconfigure(1, weight=1)
         self.grid_rowconfigure(0, weight=1)
@@ -77,12 +77,12 @@ class CamerasPanel(ctk.CTkFrame):
         
         create_button(
             btn_frame, "⏺️ Record", "success", "small",
-            command=self._toggle_record
+            command=self.toggle_record
         ).grid(row=0, column=0, padx=(0, Sizes.XS), sticky="ew")
         
         create_button(
             btn_frame, "📸 Snap", "secondary", "small",
-            command=self._take_snapshot
+            command=self.take_snapshot
         ).grid(row=0, column=1, padx=(Sizes.XS, 0), sticky="ew")
         
         # Camera list
@@ -93,29 +93,29 @@ class CamerasPanel(ctk.CTkFrame):
             list_card,
             self.camera_manager,
             self.state,
-            on_view=self._select_camera,
-            on_add=self._add_camera
+            on_view=self.select_camera,
+            on_add=self.add_camera
         )
         self.camera_list.pack(fill="both", expand=True, padx=Sizes.SM, pady=Sizes.SM)
     
-    def _start_video_loop(self):
+    def start_video_loop(self):
         """Start video update loop"""
-        self._update_video()
+        self.update_video()
     
-    def _update_video(self):
+    def update_video(self):
         """Update video frame"""
-        if not self._running:
+        if not self.running:
             return
         
         selected = self.selected_camera.get()
         if not selected:
-            self.after(100, self._update_video)
+            self.after(100, self.update_video)
             return
         
         cam = self.camera_manager.get_camera(selected) if self.camera_manager else None
         if not cam:
             self.video_label.configure(text=f"❌ Camera not found: {selected}", image=None)
-            self.after(1000, self._update_video)
+            self.after(1000, self.update_video)
             return
         
         try:
@@ -150,14 +150,14 @@ class CamerasPanel(ctk.CTkFrame):
         
         # Schedule next update
         refresh_rate = 33 if self.state.is_detection_enabled() else 50
-        self.after(refresh_rate, self._update_video)
+        self.after(refresh_rate, self.update_video)
     
-    def _select_camera(self, source: str):
+    def select_camera(self, source: str):
         """Select camera to view"""
         self.selected_camera.set(source)
         log_activity(f"Viewing camera: {source}", "info")
     
-    def _add_camera(self):
+    def add_camera(self):
         """Show add camera dialog"""
         from gui.dialogs import AddCameraDialog
         
@@ -167,12 +167,12 @@ class CamerasPanel(ctk.CTkFrame):
             if camera and self.camera_list:
                 self.camera_list.add_camera(source_id, camera)
                 # Auto-select the new camera
-                self._select_camera(source_id)
+                self.select_camera(source_id)
         
         dialog = AddCameraDialog(self, self.camera_manager, on_success=on_success)
         dialog.grab_set()
     
-    def _take_snapshot(self):
+    def take_snapshot(self):
         """Take snapshot from current camera"""
         selected = self.selected_camera.get()
         if not selected:
@@ -191,13 +191,13 @@ class CamerasPanel(ctk.CTkFrame):
         
         log_activity(f"Snapshot saved: {img_path.name}", "success")
     
-    def _toggle_record(self):
+    def toggle_record(self):
         """Toggle recording"""
         log_activity("Recording toggled", "info")
     
     def stop(self):
         """Stop video loop"""
-        self._running = False
+        self.running = False
     
     def destroy(self):
         self.stop()
