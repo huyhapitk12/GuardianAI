@@ -51,6 +51,7 @@ camera:
   sources: [0]
   target_fps: 10
 detection:
+  face_recognition_enabled: true
   face_recognition_threshold: 0.55
   fire_confidence_threshold: 0.85
   global_enabled: true

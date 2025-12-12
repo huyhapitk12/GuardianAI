@@ -96,6 +96,35 @@ class Settings:
         except (KeyError, TypeError):
             return default
 
+    def set(self, key: str, value: Any):
+        """Update a setting value by key"""
+        keys = key.split('.')
+        current = self._config
+        for k in keys[:-1]:
+            if k not in current:
+                current[k] = {}
+            current = current[k]
+        current[keys[-1]] = value
+
+    def save(self):
+        """Save current configuration to file"""
+        data = self._prepare_for_save(self._config)
+        save_raw_config(data)
+        
+    def _prepare_for_save(self, data):
+        """Recursively convert Path objects to strings and handle other types"""
+        if isinstance(data, dict):
+            return {k: self._prepare_for_save(v) for k, v in data.items()}
+        elif isinstance(data, list):
+            return [self._prepare_for_save(i) for i in data]
+        elif isinstance(data, Path):
+            try:
+                # Try to make path relative to project root
+                return str(data.relative_to(self.base_dir))
+            except ValueError:
+                return str(data)
+        return data
+
 class _ConfigProxy:
     """Proxy for accessing nested dictionaries as attributes"""
     def __init__(self, data: dict):

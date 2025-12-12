@@ -97,6 +97,10 @@ class Camera:
         # Trạng thái detection
         self.last_detection_enabled = False
         
+        # Override per-camera settings (None = dùng global settings)
+        self.face_enabled = None
+        self.behavior_enabled = None
+        
         # Kết nối camera
         self.init_capture()
     
@@ -288,12 +292,21 @@ class Camera:
                 self.ai_active_until = now + 5.0
             
             # 2. Chỉ chạy AI khi cần
-            should_run_ai = detection_enabled and (
+            # ----- Kiểm tra 2 toggle chức năng -----
+            # Ưu tiên setting riêng của camera, nếu None thì dùng Global
+            face_enabled = self.face_enabled if self.face_enabled is not None else settings.get('detection.face_recognition_enabled', True)
+            behavior_enabled = self.behavior_enabled if self.behavior_enabled is not None else settings.get('behavior.enabled', True)
+            
+            # [LOGIC] Nếu cả 2 đều tắt -> Tắt luôn nhận diện người
+            person_detection_allowed = face_enabled or behavior_enabled
+
+            # 2. Chỉ chạy AI khi cần
+            should_run_ai = detection_enabled and person_detection_allowed and (
                 now < self.ai_active_until or self.frame_idx < 30
             )
             
             if should_run_ai:
-                self.process_persons(small, frame, scale_x, scale_y)
+                self.process_persons(small, frame, scale_x, scale_y, face_enabled)
                 
                 # 3. Nếu có người, giữ AI hoạt động (tránh mất track khi đứng yên)
                 if self.person_tracker.has_tracks():
@@ -305,9 +318,9 @@ class Camera:
                 self.fire_queue.put(small.copy())
             
             # ----- Phân tích hành vi -----
-            # [LOGIC] Chỉ chạy AI hành vi khi ĐÃ phát hiện người
+            # [LOGIC] Chỉ chạy AI hành vi khi ĐÃ phát hiện người VÀ behavior được bật
             has_people = self.person_tracker.has_tracks()
-            if detection_enabled and self.behavior_analyzer and not self.behavior_queue.full() and has_people:
+            if detection_enabled and behavior_enabled and self.behavior_analyzer and not self.behavior_queue.full() and has_people:
                 self.behavior_queue.put(small.copy())
             
             # ----- Xử lý kết quả từ các worker -----
@@ -324,7 +337,7 @@ class Camera:
         # Dọn dẹp khi thoát
         self.release()
     
-    def process_persons(self, small, full, scale_x, scale_y):
+    def process_persons(self, small, full, scale_x, scale_y, face_enabled=True):
         """Xử lý phát hiện và tracking người"""
         try:
             # Lấy ngưỡng tin cậy
@@ -337,11 +350,10 @@ class Camera:
             detections = self.person_tracker.detect(small, threshold)
             
             # Cập nhật tracking
-            if self.is_ir:
-                # IR: Bỏ qua nhận diện khuôn mặt (không có màu)
-                self.person_tracker.update(detections, full, scale_x, scale_y, skip_face_check=True)
-            else:
-                self.person_tracker.update(detections, full, scale_x, scale_y)
+            # Skip face check nếu: IR mode HOẶC Face Recognition bị tắt
+            skip_face = self.is_ir or not face_enabled
+            
+            self.person_tracker.update(detections, full, scale_x, scale_y, skip_face_check=skip_face)
             
             # Kiểm tra cảnh báo
             for tid, alert_type, metadata in self.person_tracker.check_alerts():
@@ -491,8 +503,21 @@ class Camera:
             x1, y1, x2, y2 = map(int, track.bbox)
             
             # Xác định tên hiển thị
-            name = track.confirmed_name or track.name
-            is_stranger = (name == "Stranger")
+            # Determine enabled features
+            face_enabled = self.face_enabled if self.face_enabled is not None else settings.get('detection.face_recognition_enabled', True)
+            behavior_enabled = self.behavior_enabled if self.behavior_enabled is not None else settings.get('behavior.enabled', True)
+            
+            # Reset anomaly if behavior disabled
+            if not behavior_enabled:
+                is_anomaly = False
+            
+            # Determine display name
+            if face_enabled:
+                name = track.confirmed_name or track.name
+                is_stranger = (name == "Stranger")
+            else:
+                name = "Person"
+                is_stranger = False
             
             # ===== XÁC ĐỊNH MÀU BOX =====
             if is_anomaly:
@@ -539,8 +564,15 @@ class Camera:
         
         # Vẽ skeleton nếu có pose và chưa quá thời gian hold
         if self.last_pose and self.last_pose.bbox and (now - self.last_pose_time < self.pose_hold_time):
+            # [LOGIC] Check if behavior is enabled
+            behavior_enabled = self.behavior_enabled if self.behavior_enabled is not None else settings.get('behavior.enabled', True)
+            if not behavior_enabled:
+                self.last_pose = None
+                return
+
             # [LOGIC MỚI] Chỉ vẽ nếu skeleton nằm trong vùng của người đã phát hiện
             # Điều này giúp đồng bộ giữa Person Detection và Behavior Analysis
+
             should_draw = False
             
             # 1. Tính toán tọa độ skeleton trên frame hiển thị

@@ -41,23 +41,67 @@ class CameraCard(ctk.CTkFrame):
         header = ctk.CTkFrame(self, fg_color="transparent")
         header.pack(fill="x", padx=Sizes.MD, pady=(Sizes.MD, Sizes.SM))
         
-        ctk.CTkLabel(
-            header, text=f"📹 Camera {self.source}",
-            font=Fonts.BODY_BOLD, text_color=Colors.TEXT_PRIMARY
-        ).pack(side="left")
+        # Camera Name via header grid
+        header.grid_columnconfigure(0, weight=1)
         
-        # Detection switch
-        det_var = StringVar(value="on" if self.state.is_detection_enabled(self.source) else "off")
-        self.switches['detect'] = det_var
+        # Row 0: Name and Status Dot
+        top_frame = ctk.CTkFrame(header, fg_color="transparent")
+        top_frame.grid(row=0, column=0, sticky="ew", pady=(0, 5))
         
-        create_switch(
-            header, "Detect", det_var,
-            command=lambda: self.toggle_detection()
-        ).pack(side="right")
+        display_name = self.source
+        # Slightly less truncation needed if on own row, but keep safety
+        if len(display_name) > 30:
+            display_name = display_name[:27] + "..."
+            
+        title = ctk.CTkLabel(
+            top_frame, text=f"📹 Camera {display_name}",
+            font=Fonts.BODY_BOLD, text_color=Colors.TEXT_PRIMARY,
+            anchor="w"
+        )
+        title.pack(side="left")
         
-        # Status dot
-        self.labels['dot'] = ctk.CTkFrame(header, width=10, height=10, corner_radius=5)
-        self.labels['dot'].pack(side="right", padx=Sizes.MD)
+        # Status dot (moved next to name)
+        self.labels['dot'] = ctk.CTkFrame(top_frame, width=10, height=10, corner_radius=5)
+        self.labels['dot'].pack(side="right", padx=Sizes.SM)
+
+        # Row 1: Switches
+        # Switch container
+        sw_frame = ctk.CTkFrame(header, fg_color="transparent")
+        sw_frame.grid(row=1, column=0, sticky="ew")
+        # Face Switch
+        face_var = StringVar(value="on") # Default, will sync later
+        self.switches['face'] = face_var
+        
+        face_sw = ctk.CTkSwitch(
+            sw_frame, text="Khuôn mặt", variable=face_var,
+            onvalue="on", offvalue="off",
+            width=80, height=20, font=Fonts.TINY,
+            command=lambda: self.toggle_feature('face')
+        )
+        face_sw.pack(side="right", padx=5) # Right aligned
+        
+        # Behavior Switch
+        beh_var = StringVar(value="on")
+        self.switches['behavior'] = beh_var
+        
+        beh_sw = ctk.CTkSwitch(
+            sw_frame, text="Hành vi", variable=beh_var,
+            onvalue="on", offvalue="off",
+            width=80, height=20, font=Fonts.TINY,
+            command=lambda: self.toggle_feature('behavior')
+        )
+        beh_sw.pack(side="right", padx=5) # Right aligned
+        
+        # Sync initial state
+        if self.camera:
+            # Read from camera logic (Global + Override)
+            from config import settings
+            f_val = self.camera.face_enabled if self.camera.face_enabled is not None else settings.get('detection.face_recognition_enabled', True)
+            b_val = self.camera.behavior_enabled if self.camera.behavior_enabled is not None else settings.get('behavior.enabled', True)
+            
+            face_var.set("on" if f_val else "off")
+            beh_var.set("on" if b_val else "off")
+
         
         # Stats row
         stats = ctk.CTkFrame(self, fg_color="transparent")
@@ -109,11 +153,35 @@ class CameraCard(ctk.CTkFrame):
         self.labels['progress'] = ctk.CTkProgressBar(self, height=4, progress_color=Colors.SUCCESS)
         self.labels['progress'].pack(fill="x", padx=Sizes.MD, pady=(0, Sizes.SM))
     
-    def toggle_detection(self):
-        enabled = self.switches['detect'].get() == "on"
-        self.state.set_detection(enabled, self.source)
-        log_activity(f"Detection {'enabled' if enabled else 'disabled'} for Camera {self.source}",
-                    "success" if enabled else "warning")
+    def toggle_feature(self, feature: str):
+        """Toggle Face or Behavior features"""
+        if not self.camera:
+            return
+            
+        # Get current state
+        face_on = self.switches['face'].get() == "on"
+        beh_on = self.switches['behavior'].get() == "on"
+        
+        # Update specific feature
+        if feature == 'face':
+            self.camera.face_enabled = face_on
+            log_activity(f"Face Recognition {'enabled' if face_on else 'disabled'} for {self.source}", "info")
+        elif feature == 'behavior':
+            self.camera.behavior_enabled = beh_on
+            log_activity(f"Behavior Analysis {'enabled' if beh_on else 'disabled'} for {self.source}", "info")
+            
+        # [LOGIC] Master Detection Control
+        should_detect = face_on or beh_on
+        current_detect = self.state.is_detection_enabled(self.source)
+        
+        if should_detect and not current_detect:
+            self.state.set_detection(True, self.source)
+            log_activity(f"Auto-enabled detection for {self.source}", "success")
+        elif not should_detect and current_detect:
+            self.state.set_detection(False, self.source)
+            log_activity(f"Auto-disabled detection for {self.source} (All features off)", "warning")
+
+
     
     def toggle_ir(self):
         if hasattr(self.camera, 'set_ir_enhancement'):
