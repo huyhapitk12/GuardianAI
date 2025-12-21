@@ -49,7 +49,7 @@ camera:
   process_size:
   - 1280
   - 720
-  sources: 01.mp4
+  sources: 
   target_fps: 10
 detection:
   face_recognition_enabled: true
