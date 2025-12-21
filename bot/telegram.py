@@ -1,12 +1,11 @@
-"""Telegram bot service"""
+# Telegram bot service
 
-from __future__ import annotations
 import asyncio
 import json
 import re
 import time
 import threading
-from typing import Any, Callable, Dict, Optional, Tuple
+
 
 import requests
 from requests.adapters import HTTPAdapter
@@ -33,17 +32,17 @@ except ImportError:
     OPENAI_AVAILABLE = False
 
 
-def get_session() -> requests.Session:
-    """Create session with retry"""
+# Create session with retry
+def get_session():
     session = requests.Session()
     retry = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
     session.mount("https://", HTTPAdapter(max_retries=retry))
     return session
 
 
-def send_photo(chat_id: str, photo_path: str, caption: str = "", 
-               reply_markup: dict = None, silent: bool = False) -> bool:
-    """Send photo via Telegram API"""
+# Send photo via Telegram API
+def send_photo(chat_id, photo_path, caption="", 
+               reply_markup=None, silent=False):
     for _ in range(3):
         try:
             url = f"https://api.telegram.org/bot{settings.telegram.token}/sendPhoto"
@@ -79,8 +78,8 @@ def send_photo(chat_id: str, photo_path: str, caption: str = "",
     return False
 
 
-def send_video(chat_id: str, video_path: str, caption: str = "") -> bool:
-    """Send video via Telegram API"""
+# Send video via Telegram API
+def send_video(chat_id, video_path, caption=""):
     try:
         from pathlib import Path
         path = Path(video_path)
@@ -109,10 +108,9 @@ def send_video(chat_id: str, video_path: str, caption: str = "") -> bool:
         return False
 
 
+# AI-powered chat assistant
 class AIAssistant:
-    """AI-powered chat assistant"""
     
-    __slots__ = ('client', 'history', 'enabled')
     
     SYSTEM_PROMPT = """Bạn là Guardian Bot - trợ lý bảo mật thông minh.
 Trả lời ngắn gọn bằng tiếng Việt.
@@ -121,7 +119,7 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
     def __init__(self):
         self.enabled = settings.ai.enabled
         self.client = None
-        self.history: Dict[str, list] = {}
+        self.history = {}
         
         if self.enabled and OPENAI_AVAILABLE and AsyncOpenAI:
             try:
@@ -133,8 +131,8 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
             except Exception:
                 self.enabled = False
     
-    async def process(self, chat_id: str, message: str) -> Tuple[str, Optional[str]]:
-        """Process message and return (reply, action)"""
+    # Process message and return (reply, action)
+    async def process(self, chat_id, message):
         if not self.enabled or not self.client:
             return self.simple_response(message), None
         
@@ -143,8 +141,8 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         except Exception as e:
             return f"Lỗi: {e}", None
     
-    def simple_response(self, message: str) -> str:
-        """Simple keyword-based response"""
+    # Simple keyword-based response
+    def simple_response(self, message):
         msg = message.lower()
         
         if any(w in msg for w in ['bật', 'on', 'enable']):
@@ -158,8 +156,8 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         
         return "AI không khả dụng."
     
-    async def llm_response(self, chat_id: str, message: str) -> Tuple[str, Optional[str]]:
-        """LLM-based response"""
+    # LLM-based response
+    async def llm_response(self, chat_id, message):
         history = self.history.get(chat_id, [])
         
         messages = [{"role": "system", "content": self.SYSTEM_PROMPT}]
@@ -191,19 +189,19 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         
         return reply, action
     
-    def add_context(self, chat_id: str, message: str):
-        """Add system context to history"""
+    # Add system context to history
+    def add_context(self, chat_id, message):
         if chat_id not in self.history:
             self.history[chat_id] = []
         self.history[chat_id].append({"role": "system", "content": message})
     
-    def clear(self, chat_id: str):
-        """Clear chat history"""
+    # Clear chat history
+    def clear(self, chat_id):
         self.history.pop(chat_id, None)
 
 
-def create_alert_keyboard(alert_id: str, is_fire: bool = False):
-    """Create inline keyboard for alerts"""
+# Create inline keyboard for alerts
+def create_alert_keyboard(alert_id, is_fire=False):
     if not TELEGRAM_AVAILABLE:
         return None
     
@@ -222,14 +220,12 @@ def create_alert_keyboard(alert_id: str, is_fire: bool = False):
     return InlineKeyboardMarkup(keyboard)
 
 
+# Telegram bot for Guardian system
 class GuardianBot:
-    """Telegram bot for Guardian system"""
     
-    __slots__ = ('app', 'ai', 'alarm', 'snapshot_fn', 'camera_mgr',
-                 'response_queue', 'quit')
     
-    def __init__(self, ai_assistant: AIAssistant, alarm_player, 
-                 snapshot_fn: Callable, camera_manager, response_queue):
+    def __init__(self, ai_assistant, alarm_player, 
+                 snapshot_fn, camera_manager, response_queue):
         self.ai = ai_assistant
         self.alarm = alarm_player
         self.snapshot_fn = snapshot_fn
@@ -245,8 +241,8 @@ class GuardianBot:
         self.app = Application.builder().token(settings.telegram.token).build()
         self.setup_handlers()
     
+    # Setup command handlers
     def setup_handlers(self):
-        """Setup command handlers"""
         handlers = [
             CommandHandler("start", self.cmd_start),
             CommandHandler("status", self.cmd_status),
@@ -259,15 +255,15 @@ class GuardianBot:
         for h in handlers:
             self.app.add_handler(h)
     
-    async def cmd_start(self, update: Update, context: Any):
+    async def cmd_start(self, update, context):
         await update.message.reply_text("🛡️ Guardian Bot sẵn sàng!\n/status, /detect, /get_image, /alarm")
     
-    async def cmd_status(self, update: Update, context: Any):
+    async def cmd_status(self, update, context):
         enabled = "🟢" if state_manager.is_detection_enabled() else "🔴"
         alerts = len(state_manager.list_alerts())
         await update.message.reply_text(f"📊 Trạng thái\nPhát hiện: {enabled}\nCảnh báo: {alerts}")
     
-    async def cmd_detect(self, update: Update, context: Any):
+    async def cmd_detect(self, update, context):
         if context.args:
             cam_id = context.args[0]
             current = state_manager.is_detection_enabled(cam_id)
@@ -278,7 +274,7 @@ class GuardianBot:
             status = "🟢" if state_manager.is_detection_enabled() else "🔴"
             await update.message.reply_text(f"Phát hiện: {status}\nDùng /detect <id> để bật/tắt camera")
     
-    async def cmd_alarm(self, update: Update, context: Any):
+    async def cmd_alarm(self, update, context):
         if self.alarm and hasattr(self.alarm, 'is_alarm_playing') and self.alarm.is_alarm_playing:
             self.alarm.stop()
             await update.message.reply_text("✅ Đã tắt báo động")
@@ -287,12 +283,12 @@ class GuardianBot:
                 self.alarm.play()
             await update.message.reply_text("🚨 Đã bật báo động")
     
-    async def cmd_image(self, update: Update, context: Any):
+    async def cmd_image(self, update, context):
         source = context.args[0] if context.args else None
         await update.message.reply_text("📸 Đang chụp...")
         self.snapshot_fn(str(update.message.chat_id), source)
     
-    async def on_message(self, update: Update, context: Any):
+    async def on_message(self, update, context):
         text = update.message.text.strip()
         chat_id = str(update.message.chat_id)
         
@@ -304,7 +300,7 @@ class GuardianBot:
         if reply:
             await update.message.reply_text(reply)
     
-    async def execute_action(self, action: str, chat_id: str):
+    async def execute_action(self, action, chat_id):
         try:
             code = ActionCode[action]
             if code == ActionCode.TOGGLE_ON:
@@ -320,7 +316,7 @@ class GuardianBot:
         except Exception:
             pass
     
-    async def on_callback(self, update: Update, context: Any):
+    async def on_callback(self, update, context):
         query = update.callback_query
         await query.answer()
         
@@ -355,9 +351,9 @@ class GuardianBot:
         
         await query.edit_message_caption(caption=caption)
     
-    def schedule_alert(self, chat_id: str, image_path: str, caption: str, 
-                       alert_id: str, is_fire: bool = False, silent: bool = False):
-        """Schedule alert to be sent"""
+    # Schedule alert to be sent
+    def schedule_alert(self, chat_id, image_path, caption, 
+                       alert_id, is_fire=False, silent=False):
         if not TELEGRAM_AVAILABLE:
             return
         
@@ -369,8 +365,8 @@ class GuardianBot:
             daemon=True
         ).start()
     
+    # Send heartbeat message
     def send_heartbeat(self):
-        """Send heartbeat message"""
         if not TELEGRAM_AVAILABLE:
             return
         
@@ -383,15 +379,15 @@ class GuardianBot:
             daemon=True
         ).start()
     
-    def send_text(self, chat_id: str, text: str):
+    def send_text(self, chat_id, text):
         try:
             url = f"https://api.telegram.org/bot{settings.telegram.token}/sendMessage"
             get_session().post(url, data={'chat_id': chat_id, 'text': text}, timeout=10)
         except Exception:
             pass
     
+    # Run bot
     def run(self):
-        """Run bot"""
         if not TELEGRAM_AVAILABLE or not self.app:
             return
         

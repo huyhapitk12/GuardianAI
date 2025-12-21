@@ -1,6 +1,6 @@
-"""Gallery panel for viewing recordings"""
+# Panel thư viện để xem lại các bản ghi
 
-from __future__ import annotations
+
 import cv2
 import gc
 import uuid
@@ -19,13 +19,9 @@ from utils import security
 from gui.styles import Colors, Fonts, Sizes, create_button, create_card
 
 
+# Thư viện để xem ảnh và video
 class GalleryPanel(ctk.CTkFrame):
-    """Gallery for viewing images and videos"""
     
-    __slots__ = (
-        'list_frame', 'preview', 'info_label', 'play_btn', 'controls',
-        'playing', 'temp_file', 'stop_event', 'current_frame', 'image_ref'
-    )
     
     def __init__(self, parent, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
@@ -44,8 +40,8 @@ class GalleryPanel(ctk.CTkFrame):
         self.build_preview_panel()
         self.refresh()
     
+    # Xây dựng panel danh sách file
     def build_list_panel(self):
-        """Build file list panel"""
         panel = create_card(self)
         panel.grid(row=0, column=0, sticky="nsew", padx=(0, Sizes.SM))
         
@@ -60,8 +56,8 @@ class GalleryPanel(ctk.CTkFrame):
         self.list_frame = CTkScrollableFrame(panel, fg_color="transparent")
         self.list_frame.pack(fill="both", expand=True)
     
+    # Xây dựng panel xem trước
     def build_preview_panel(self):
-        """Build preview panel"""
         panel = create_card(self)
         panel.grid(row=0, column=1, sticky="nsew")
         panel.grid_columnconfigure(0, weight=1)
@@ -84,8 +80,8 @@ class GalleryPanel(ctk.CTkFrame):
         
         self.controls.grid_remove()
     
+    # Làm mới danh sách file
     def refresh(self):
-        """Refresh file list"""
         # Clear list
         for widget in self.list_frame.winfo_children():
             widget.destroy()
@@ -131,8 +127,8 @@ class GalleryPanel(ctk.CTkFrame):
             )
             btn.pack(fill="x", pady=2)
     
+    # Tải mục được chọn
     def load(self, item: dict):
-        """Load selected item"""
         self.cleanup()
         self.info_label.configure(text=item['name'])
         self.set_preview(text="Loading...")
@@ -152,8 +148,8 @@ class GalleryPanel(ctk.CTkFrame):
         
         threading.Thread(target=load_thread, daemon=True).start()
     
+    # Tải file ảnh
     def load_image(self, path: Path):
-        """Load image file"""
         img = security.load_image(path)
         if img is None:
             self.set_preview(text="Failed to load image")
@@ -176,8 +172,8 @@ class GalleryPanel(ctk.CTkFrame):
         
         self.after(0, update_ui)
     
+    # Tải file video
     def load_video(self, path: Path):
-        """Load video file"""
         self.current_frame = 0
         
         # Decrypt to temp file
@@ -214,15 +210,15 @@ class GalleryPanel(ctk.CTkFrame):
         else:
             self.set_preview(text="Failed to load video")
     
+    # Bật/tắt phát video
     def toggle_play(self):
-        """Toggle video playback"""
         if self.playing:
             self.pause()
         else:
             self.play()
     
+    # Bắt đầu phát
     def play(self):
-        """Start playback"""
         if not self.temp_file or not self.temp_file.exists():
             return
         
@@ -232,13 +228,13 @@ class GalleryPanel(ctk.CTkFrame):
         
         threading.Thread(target=self.playback_loop, daemon=True).start()
     
+    # Tạm dừng phát
     def pause(self):
-        """Pause playback"""
         self.playing = False
         self.stop_event.set()
     
+    # Vòng lặp phát video
     def playback_loop(self):
-        """Video playback loop"""
         cap = cv2.VideoCapture(str(self.temp_file))
         
         if self.current_frame > 0:
@@ -284,15 +280,15 @@ class GalleryPanel(ctk.CTkFrame):
         
         self.after(0, update_frame)
     
+    # Cập nhật preview an toàn
     def set_preview(self, **kwargs):
-        """Safely update preview"""
         try:
             self.preview.configure(**kwargs)
         except Exception:
             pass
     
+    # Dọn dẹp tài nguyên
     def cleanup(self):
-        """Cleanup resources"""
         self.pause()
         self.current_frame = 0
         self.image_ref = None

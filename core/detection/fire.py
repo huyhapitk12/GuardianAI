@@ -31,28 +31,29 @@ from config import settings
 class FireConfig:
     
     def __init__(self):
-        # ----- Cấu hình chung -----
-        self.min_roi_size = 8           # Kích thước tối thiểu vùng cần kiểm tra (pixel)
-        self.flicker_history = 15       # Số frame lưu lại để phân tích nhấp nháy
-        self.flicker_min_frames = 5     # Số frame tối thiểu để phân tích
+        # Load config from settings if available
+        ff = settings.camera.fire_filter
+        self.min_roi_size = 8
+        self.flicker_history = 15
+        self.flicker_min_frames = 5
+            
+        # RGB
+        self.rgb_hue_max = getattr(ff.rgb, 'hue_orange_max', 35)
+        self.rgb_saturation_min = getattr(ff.rgb, 'saturation_min', 80)
+        self.rgb_brightness_min = getattr(ff.rgb, 'brightness_min', 100)
+        self.rgb_white_ratio_max = getattr(ff.rgb, 'rgb_white_threshold', 0.88)
+        self.rgb_entropy_min = getattr(ff.rgb, 'texture_entropy_min', 4.0)
+        self.rgb_flicker_min = getattr(ff.rgb, 'flickering_std_min', 5.0)
+            
+        # IR
+        self.ir_brightness_min = getattr(ff.infrared, 'brightness_mean_min', 120)
+        self.ir_brightness_std_min = getattr(ff.infrared, 'brightness_std_min', 25)
+        self.ir_hot_ratio_min = getattr(ff.infrared, 'bright_core_ratio_min', 0.08)
+        self.ir_hot_ratio_max = getattr(ff.infrared, 'hot_spot_ratio_max', 0.70)
+        self.ir_irregularity_min = getattr(ff.infrared, 'edge_irregularity_min', 0.3)
+        self.ir_flicker_min = getattr(ff.infrared, 'flickering_std_min', 3.0)
         
-        # ----- Ngưỡng cho camera MÀU (RGB) -----
-        # Lửa có đặc điểm: màu cam/đỏ/vàng, sáng, nhấp nháy
-        self.rgb_hue_max = 35               # Màu sắc tối đa (Hue trong HSV, 0-180)
-        self.rgb_saturation_min = 80        # Độ bão hòa màu tối thiểu
-        self.rgb_brightness_min = 100       # Độ sáng tối thiểu
-        self.rgb_white_ratio_max = 0.88     # Tỉ lệ pixel trắng tối đa (để loại phản chiếu)
-        self.rgb_entropy_min = 4.0          # Entropy tối thiểu (độ phức tạp kết cấu)
-        self.rgb_flicker_min = 5.0          # Độ nhấp nháy tối thiểu
-        
-        # ----- Ngưỡng cho camera HỒNG NGOẠI (IR) -----
-        # Camera IR không có màu, chỉ có độ sáng
-        self.ir_brightness_min = 120        # Độ sáng tối thiểu
-        self.ir_brightness_std_min = 25     # Độ lệch chuẩn sáng (lửa không đều)
-        self.ir_hot_ratio_min = 0.08        # Tỉ lệ điểm nóng tối thiểu
-        self.ir_hot_ratio_max = 0.70        # Tỉ lệ điểm nóng tối đa
-        self.ir_irregularity_min = 0.3      # Độ bất quy tắc tối thiểu (lửa không tròn đều)
-        self.ir_flicker_min = 3.0           # Độ nhấp nháy tối thiểu
+    
 
 
 # =============================================================================
@@ -60,11 +61,10 @@ class FireConfig:
 # =============================================================================
 # Class này lọc bớt các phát hiện sai (false positive)
 # Ví dụ: đèn đỏ, áo cam, TV có hình lửa -> không phải cháy thật
-# =============================================================================
 class FireFilter:
     
-    def __init__(self, config=None, debug=False):
-        # Dùng config mặc định nếu không truyền vào
+    # Dùng config mặc định nếu không truyền vào
+    def __init__(self, config=None, debug=True):
         self.config = config or FireConfig()
         
         # Lưu lịch sử độ sáng để phân tích nhấp nháy
@@ -72,18 +72,14 @@ class FireFilter:
         self.history = {}
         
         # Chế độ debug: in ra lý do loại bỏ
-        self.debug = debug
+        self.debug = True
     
+    # Kiểm tra xem vùng được phát hiện có phải lửa thật không
+    # frame: Hình ảnh gốc
+    # bbox: Tọa độ vùng nghi ngờ (x1, y1, x2, y2)
+    # is_ir: Camera hồng ngoại hay không
+    # Trả về: True nếu là lửa thật, False nếu không
     def validate(self, frame, bbox, is_ir=False):
-        """
-        Kiểm tra xem vùng được phát hiện có phải lửa thật không
-        
-        frame: Hình ảnh gốc
-        bbox: Tọa độ vùng nghi ngờ (x1, y1, x2, y2)
-        is_ir: Camera hồng ngoại hay không
-        
-        Trả về: True nếu là lửa thật, False nếu không
-        """
         # Cắt vùng cần kiểm tra
         roi = self.get_roi(frame, bbox)
         if roi is None:
@@ -95,8 +91,8 @@ class FireFilter:
         else:
             return self.validate_rgb(roi, bbox)
     
+    # Cắt vùng ROI (Region of Interest) từ frame
     def get_roi(self, frame, bbox):
-        """Cắt vùng ROI (Region of Interest) từ frame"""
         # Làm tròn tọa độ
         x1, y1, x2, y2 = map(int, bbox)
         min_size = self.config.min_roi_size
@@ -114,14 +110,12 @@ class FireFilter:
         roi = frame[y1:y2, x1:x2]
         return roi if roi.size > 0 else None
     
+    # Kiểm tra với camera màu
+    # Lửa thật có đặc điểm:
+    # - Màu cam/đỏ/vàng (Hue thấp trong HSV)
+    # - Độ bão hòa cao
+    # - Kết cấu phức tạp (không đồng đều như đèn LED)
     def validate_rgb(self, roi, bbox):
-        """
-        Kiểm tra với camera màu
-        Lửa thật có đặc điểm:
-        - Màu cam/đỏ/vàng (Hue thấp trong HSV)
-        - Độ bão hòa cao
-        - Kết cấu phức tạp (không đồng đều như đèn LED)
-        """
         cfg = self.config
         
         # ----- Bước 1: Chuyển sang không gian màu HSV -----
@@ -139,16 +133,16 @@ class FireFilter:
             return self.fail("reflection")  # Quá nhiều phản chiếu -> không phải lửa
         
         # ----- Bước 3: Kiểm tra màu sắc -----
-        # Lửa có màu cam/đỏ: Hue từ 0-30 hoặc 165-180
-        fire_hue_mask = ((h >= 0) & (h <= 30)) | ((h >= 165) & (h <= 180))
+        # Lửa có màu cam/đỏ: Hue từ 0-50 hoặc 160-180 (Mở rộng range để bắt vàng nhiều hơn)
+        fire_hue_mask = ((h >= 0) & (h <= 50)) | ((h >= 160) & (h <= 180))
         valid_hue_ratio = np.mean(fire_hue_mask)
         
-        if valid_hue_ratio < 0.4:
-            return self.fail("hue")  # Không đủ pixel màu lửa
+        if valid_hue_ratio < 0.1:
+            return self.fail(f"hue ({valid_hue_ratio:.2f}<0.1)")  # Không đủ pixel màu lửa
         
         # ----- Bước 4: Kiểm tra độ bão hòa -----
-        if np.mean(s) < 50:
-            return self.fail("saturation")  # Màu quá nhạt
+        if np.mean(s) < 15:
+            return self.fail(f"saturation ({np.mean(s):.1f}<15)")  # Màu quá nhạt
         
         # ----- Bước 5: Kiểm tra độ sáng -----
         if np.max(v) < 120:
@@ -166,18 +160,16 @@ class FireFilter:
         # Tính entropy
         entropy = -np.sum(hist * np.log2(hist))
         
-        if entropy < 3.5:
-            return self.fail("texture")  # Kết cấu quá đơn giản
+        if entropy < self.config.rgb_entropy_min:
+            return self.fail(f"texture ({entropy:.2f}<{self.config.rgb_entropy_min})")  # Kết cấu quá đơn giản
         
         # Qua tất cả bước kiểm tra -> Là lửa thật!
         return True
     
+    # Kiểm tra với camera hồng ngoại
+    # Camera IR chỉ có độ sáng, không có màu
+    # Lửa trong IR: sáng, không đều, nhấp nháy
     def validate_ir(self, roi, bbox):
-        """
-        Kiểm tra với camera hồng ngoại
-        Camera IR chỉ có độ sáng, không có màu
-        Lửa trong IR: sáng, không đều, nhấp nháy
-        """
         cfg = self.config
         
         # Chuyển sang grayscale
@@ -224,11 +216,9 @@ class FireFilter:
         
         return True
     
+    # Kiểm tra độ nhấp nháy theo thời gian
+    # Lửa thật nhấp nháy, đèn LED không
     def check_flicker(self, gray, bbox, threshold):
-        """
-        Kiểm tra độ nhấp nháy theo thời gian
-        Lửa thật nhấp nháy, đèn LED không
-        """
         # Tạo key dựa trên vị trí (chia ô để gộp các vị trí gần nhau)
         key = f"{bbox[0]//20}_{bbox[1]//20}"
         
@@ -248,14 +238,14 @@ class FireFilter:
         # Lửa nhấp nháy -> độ lệch chuẩn cao
         return np.std(list(hist)) > threshold
     
+    # In lý do thất bại (nếu đang debug)
     def fail(self, reason):
-        """In lý do thất bại (nếu đang debug)"""
         if self.debug:
             print(f"❌ Lọc phát hiện cháy - Loại: {reason}")
         return False
     
+    # Dọn dẹp history cũ để tiết kiệm bộ nhớ
     def cleanup(self):
-        """Dọn dẹp history cũ để tiết kiệm bộ nhớ"""
         if len(self.history) > 50:
             keys = list(self.history.keys())[:-30]
             for k in keys:
@@ -267,7 +257,6 @@ class FireFilter:
 # =============================================================================
 # Class này sử dụng YOLO để phát hiện lửa/khói
 # YOLO = You Only Look Once - Mạng neural nhận diện vật thể nhanh
-# =============================================================================
 class FireDetector:
     
     def __init__(self, debug=False):
@@ -278,11 +267,9 @@ class FireDetector:
         # Xử lý mỗi N frame để giảm tải CPU/GPU
         self.skip_interval = settings.get('camera.process_every_n_frames', 3)
     
+    # Khởi tạo model phát hiện cháy
+    # Trả về: True nếu thành công, False nếu thất bại
     def initialize(self):
-        """
-        Khởi tạo model phát hiện cháy
-        Trả về: True nếu thành công, False nếu thất bại
-        """
         # Kiểm tra đã cài YOLO chưa
         if not YOLO:
             print("⚠️ Thư viện ultralytics chưa được cài đặt!")
@@ -317,15 +304,11 @@ class FireDetector:
             print(f"❌ Lỗi khởi tạo phát hiện cháy: {e}")
             return False
     
+    # Phát hiện lửa/khói trong frame
+    # frame: Hình ảnh cần kiểm tra
+    # skip: Có bỏ qua một số frame để giảm tải không
+    # Trả về: Danh sách các vùng phát hiện được
     def detect(self, frame, skip=True):
-        """
-        Phát hiện lửa/khói trong frame
-        
-        frame: Hình ảnh cần kiểm tra
-        skip: Có bỏ qua một số frame để giảm tải không
-        
-        Trả về: Danh sách các vùng phát hiện được
-        """
         # Kiểm tra model đã tải chưa
         if not self.model:
             return []
@@ -365,9 +348,9 @@ class FireDetector:
                     
                     # Lấy ngưỡng tin cậy từ config
                     if cls == 'smoke':
-                        threshold = settings.get('detection.smoke_confidence', 0.7)
+                        threshold = settings.get('detection.smoke_confidence_threshold', 0.7)
                     else:
-                        threshold = settings.get('detection.fire_confidence', 0.6)
+                        threshold = settings.get('detection.fire_confidence_threshold', 0.6)
                     
                     # Bỏ qua nếu độ tin cậy thấp
                     if conf < threshold:
@@ -393,6 +376,6 @@ class FireDetector:
             print(f"⚠️ Lỗi phát hiện cháy: {e}")
             return []
     
+    # Kiểm tra vùng phát hiện có phải lửa thật không
     def validate(self, frame, bbox, is_ir=False):
-        """Kiểm tra vùng phát hiện có phải lửa thật không"""
         return self.fire_filter.validate(frame, bbox, is_ir)

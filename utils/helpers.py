@@ -1,33 +1,18 @@
-"""Common helper utilities"""
-
-from __future__ import annotations
 import gc
 import os
 import time
 import threading
 import functools
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional
+
 from concurrent.futures import ThreadPoolExecutor
-
 import psutil
-
-# Optional pygame
-try:
-    import pygame
-    PYGAME_AVAILABLE = True
-except ImportError:
-    pygame = None
-    PYGAME_AVAILABLE = False
-
+import pygamea
 from config import settings
 
-
-# ==================== DECORATORS ====================
-
-def retry(attempts: int = 3, delay: float = 1.0):
-    """Retry on exception"""
-    def decorator(func: Callable) -> Callable:
+# Thử lại khi lỗi
+def retry(attempts=3, delay=1.0):
+    def decorator(func):
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
             last_error = None
@@ -43,8 +28,8 @@ def retry(attempts: int = 3, delay: float = 1.0):
     return decorator
 
 
-def threaded(func: Callable) -> Callable:
-    """Run function in background thread"""
+# Chạy hàm trong luồng nền
+def threaded(func):
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
         thread = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=True)
@@ -55,19 +40,16 @@ def threaded(func: Callable) -> Callable:
 
 # ==================== ALARM ====================
 
+# Phát âm thanh cảnh báo với hiệu ứng fade-in
 class AlarmPlayer:
-    """Audio alarm player with fade-in"""
     
-    __slots__ = ('_sound_file', '_stop_flag', '_thread')
     
-    def __init__(self, sound_file: Path):
+    def __init__(self, sound_file):
         self._sound_file = sound_file
         self._stop_flag = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread = None
     
-    def initialize(self) -> bool:
-        if not PYGAME_AVAILABLE:
-            return False
+    def initialize(self):
         try:
             pygame.mixer.pre_init(22050, -16, 2, 512)
             pygame.mixer.init()
@@ -76,7 +58,7 @@ class AlarmPlayer:
             return False
     
     def play(self):
-        if not PYGAME_AVAILABLE or not self._sound_file.exists():
+        if not self._sound_file.exists():
             return
         
         try:
@@ -91,9 +73,6 @@ class AlarmPlayer:
             print(f"Alarm error: {e}")
     
     def stop(self):
-        if not PYGAME_AVAILABLE:
-            return
-        
         try:
             self._stop_flag.set()
             if pygame.mixer.music.get_busy():
@@ -102,9 +81,6 @@ class AlarmPlayer:
             pass
     
     def _fade_in(self):
-        if not PYGAME_AVAILABLE:
-            return
-            
         start = time.time()
         duration = settings.alarm.fade_duration
         start_vol = settings.alarm.start_volume
@@ -129,11 +105,11 @@ class AlarmPlayer:
                 pass
 
 
-# Global alarm instance
-_alarm: Optional[AlarmPlayer] = None
+# Biến alarm toàn cục
+_alarm = None
 
 
-def init_alarm() -> bool:
+def init_alarm():
     global _alarm
     _alarm = AlarmPlayer(settings.paths.alarm_sound)
     return _alarm.initialize()
@@ -151,24 +127,23 @@ def stop_alarm():
 
 # ==================== MEMORY ====================
 
-def get_memory_mb() -> float:
-    """Get current process memory in MB"""
+# Lấy dung lượng bộ nhớ hiện tại (MB)
+def get_memory_mb():
     return psutil.Process().memory_info().rss / 1024 / 1024
 
 
+# Ép buộc thu gom rác bộ nhớ
 def cleanup_memory():
-    """Force garbage collection"""
     gc.collect()
 
 
+# Giám sát và dọn dẹp bộ nhớ chạy nền
 class MemoryMonitor:
-    """Background memory cleanup"""
     
-    __slots__ = ('_running', '_thread', '_threshold', '_interval')
     
-    def __init__(self, threshold_mb: float = 800, interval: float = 60):
+    def __init__(self, threshold_mb=800, interval=60):
         self._running = False
-        self._thread: Optional[threading.Thread] = None
+        self._thread = None
         self._threshold = threshold_mb
         self._interval = interval
     
@@ -193,17 +168,16 @@ class MemoryMonitor:
 
 # ==================== THREAD POOL ====================
 
+# Thread pool đơn giản cho các tác vụ bất đồng bộ
 class TaskPool:
-    """Simple thread pool for async tasks"""
     
-    __slots__ = ('_executor', '_stats')
     
-    def __init__(self, workers: int = 4):
+    def __init__(self, workers=4):
         self._executor = ThreadPoolExecutor(max_workers=workers, thread_name_prefix="Task")
         self._stats = {'submitted': 0, 'completed': 0, 'failed': 0}
     
-    def submit(self, func: Callable, *args, **kwargs):
-        """Submit task to pool"""
+    # Gửi task vào pool
+    def submit(self, func, *args, **kwargs):
         try:
             future = self._executor.submit(func, *args, **kwargs)
             self._stats['submitted'] += 1
@@ -223,7 +197,7 @@ class TaskPool:
         self._executor.shutdown(wait=wait)
     
     @property
-    def stats(self) -> Dict[str, int]:
+    def stats(self):
         return self._stats.copy()
 
 

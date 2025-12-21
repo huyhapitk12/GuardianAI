@@ -1,98 +1,91 @@
-"""Motion detection để filter trước khi chạy YOLO"""
-
+# Phát hiện chuyển động đơn giản
 import cv2
 import numpy as np
 from collections import deque
 
 
+# Tìm chuyển động trong khung hình
 class MotionDetector:
-    """Phát hiện chuyển động đơn giản, nhanh"""
     
-    __slots__ = ('_prev_gray', '_motion_threshold', '_min_area', 
-                 '_motion_history', '_active', '_motion_boxes')
-    
-    def __init__(self, motion_threshold: float = 25.0, min_area: int = 500):
-        """
-        Args:
-            motion_threshold: Ngưỡng độ sáng thay đổi (0-255)
-            min_area: Diện tích tối thiểu vùng chuyển động (pixels)
-        """
+    # init
+    def __init__(self, motion_threshold=25.0, min_area=500):
         self._prev_gray = None
-        self._motion_threshold = motion_threshold
-        self._min_area = min_area
-        self._motion_history = deque(maxlen=5)  # Lưu 5 frame gần nhất
+        self.nguong = motion_threshold
+        self.dien_tich_min = min_area
+        self.lich_su = deque(maxlen=5) # Lưu 5 frame gần nhất
         self._active = False
-        self._motion_boxes = []
-    
-    def detect(self, frame: np.ndarray) -> bool:
-        """
-        Kiểm tra có chuyển động không và lưu boxes
-        """
-        self._motion_boxes = [] # Reset boxes
+        self.motion_boxes = []
+        print("motion detector init")
+        # print(self.nguong)
+
+    def detect(self, frame):
+        # print("detecting...")
+        self.motion_boxes = [] 
         
-        # Chuyển sang grayscale và giảm kích thước để nhanh hơn
-        # Small size logic must match config used
+        # resize
         h, w = frame.shape[:2]
         small_h, small_w = 180, 320
         scale_x = w / small_w
         scale_y = h / small_h
         
-        small = cv2.resize(frame, (small_w, small_h))
+        # small = cv2.resize(frame, (small_w, small_h))
+        small = cv2.resize(frame, (320, 180))
         gray = cv2.cvtColor(small, cv2.COLOR_BGR2GRAY)
-        gray = cv2.GaussianBlur(gray, (21, 21), 0) # Tăng kernel để giảm nhiễu
+        gray = cv2.GaussianBlur(gray, (21, 21), 0) # lọc nhiễu
         
-        # Frame đầu tiên
+        
+        # print(gray.shape)
+
         if self._prev_gray is None:
             self._prev_gray = gray
-            return True
+            return True # Lần đầu luôn trả về true
         
-        # Tính frame difference
+        # Trừ ảnh
         diff = cv2.absdiff(self._prev_gray, gray)
-        _, thresh = cv2.threshold(diff, self._motion_threshold, 255, cv2.THRESH_BINARY)
+        _, thresh = cv2.threshold(diff, self.nguong, 255, cv2.THRESH_BINARY)
         thresh = cv2.dilate(thresh, None, iterations=2)
         
-        # Find contours
+        # Tìm contour
         contours, _ = cv2.findContours(thresh.copy(), cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
         
-        has_motion = False
+        co_chuyen_dong = False
         for c in contours:
-            if cv2.contourArea(c) < self._min_area: # min_area này tính trên ảnh nhỏ (320x180)
+            if cv2.contourArea(c) < self.dien_tich_min: 
                 continue
             
-            has_motion = True
+            co_chuyen_dong = True
+            # print("thay chuyen dong roi")
             (x, y, bw, bh) = cv2.boundingRect(c)
             
-            # Scale back to original size
+            # scale lại về kích thước cũ
             orig_box = (
                 int(x * scale_x), 
                 int(y * scale_y), 
                 int((x + bw) * scale_x), 
                 int((y + bh) * scale_y)
             )
-            self._motion_boxes.append(orig_box)
+            self.motion_boxes.append(orig_box)
 
-        # Cập nhật prev frame
+
         self._prev_gray = gray
+        self.lich_su.append(co_chuyen_dong)
         
-        # Lưu lịch sử
-        self._motion_history.append(has_motion)
+        # Check xem 5 frame gần nhất
+        recent = sum(self.lich_su) >= 2
         
-        # Trả về True nếu có motion trong 5 frame gần nhất
-        recent_motion = sum(self._motion_history) >= 2
-        
-        if recent_motion:
+        if recent:
             self._active = True
-        elif len(self._motion_history) >= 5 and sum(self._motion_history) == 0:
+        elif len(self.lich_su) >= 5 and sum(self.lich_su) == 0:
             self._active = False
         
+        # testing
+        # if self._active:
+        #     print("active!")
+            
         return self._active
 
-    @property
-    def motion_boxes(self):
-        return self._motion_boxes
-    
     def reset(self):
-        """Reset detector"""
+        print("reset motion")
         self._prev_gray = None
-        self._motion_history.clear()
+        self.lich_su.clear()
         self._active = False

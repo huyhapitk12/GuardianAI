@@ -1,61 +1,53 @@
-"""State management và alert handling"""
-
-from __future__ import annotations
+# State management và alert handling
 import threading
 import time
-from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Set, Tuple, Union
 from collections import deque
-
 from config import settings, AlertType, AlertPriority
 
 
-@dataclass
+# Alert information
 class Alert:
-    """Alert information"""
-    id: str
-    type: str
-    timestamp: float
-    source_id: Optional[str] = None
-    chat_id: Optional[str] = None
-    image_path: Optional[str] = None
-    name: Optional[str] = None
-    resolved: bool = False
-    resolution: Optional[str] = None
+    def __init__(self, id, type, timestamp, source_id=None, chat_id=None, 
+                 image_path=None, name=None, resolved=False, resolution=None):
+        self.id = id
+        self.type = type
+        self.timestamp = timestamp
+        self.source_id = source_id
+        self.chat_id = chat_id
+        self.image_path = image_path
+        self.name = name
+        self.resolved = resolved
+        self.resolution = resolution
 
 
+# Thread-safe state management
 class StateManager:
-    """Thread-safe state management"""
-    
-    __slots__ = ('_lock', '_states', '_alerts', '_detection_global', 
-                 '_detection_cameras', '_alert_counter', '_unresolved')
-    
     def __init__(self):
         self._lock = threading.RLock()
-        self._states: Dict[str, Any] = {}
-        self._alerts: Dict[str, Alert] = {}
+        self._states = {}
+        self._alerts = {}
         self._detection_global = True
-        self._detection_cameras: Dict[str, bool] = {}
+        self._detection_cameras = {}
         self._alert_counter = 0
-        self._unresolved: Set[Tuple] = set()
+        self._unresolved = set()
     
     # State management
-    def set(self, key: str, value: Any):
+    def set(self, key, value):
         with self._lock:
             self._states[key] = value
     
-    def get(self, key: str, default: Any = None) -> Any:
+    def get(self, key, default=None):
         with self._lock:
             return self._states.get(key, default)
     
     # Detection control
-    def is_detection_enabled(self, source_id: Optional[str] = None) -> bool:
+    def is_detection_enabled(self, source_id=None):
         with self._lock:
             if source_id is None:
                 return self._detection_global
             return self._detection_global and self._detection_cameras.get(source_id, True)
     
-    def set_detection(self, enabled: bool, source_id: Optional[str] = None):
+    def set_detection(self, enabled, source_id=None):
         with self._lock:
             if source_id is None:
                 self._detection_global = enabled
@@ -63,16 +55,16 @@ class StateManager:
                 self._detection_cameras[source_id] = enabled
     
     # Aliases for compatibility
-    def is_person_detection_enabled(self, source_id: Optional[str] = None) -> bool:
+    def is_person_detection_enabled(self, source_id=None):
         return self.is_detection_enabled(source_id)
     
-    def set_person_detection_enabled(self, enabled: bool, source_id: Optional[str] = None):
+    def set_person_detection_enabled(self, enabled, source_id=None):
         self.set_detection(enabled, source_id)
     
     # Alert management
-    def create_alert(self, alert_type: str, source_id: Optional[str] = None,
-                     chat_id: Optional[str] = None, image_path: Optional[str] = None,
-                     name: Optional[str] = None) -> str:
+    def create_alert(self, alert_type, source_id=None,
+                     chat_id=None, image_path=None,
+                     name=None):
         with self._lock:
             self._alert_counter += 1
             alert_id = f"alert_{self._alert_counter}_{int(time.time())}"
@@ -90,7 +82,7 @@ class StateManager:
             self._unresolved.add((alert_type, source_id or 'default'))
             return alert_id
     
-    def resolve_alert(self, alert_id: str, resolution: Optional[str] = None) -> bool:
+    def resolve_alert(self, alert_id, resolution=None):
         with self._lock:
             alert = self._alerts.get(alert_id)
             if not alert:
@@ -101,33 +93,32 @@ class StateManager:
             self._unresolved.discard((alert.type, alert.source_id or 'default'))
             return True
     
-    def get_alert(self, alert_id: str) -> Optional[Alert]:
+    def get_alert(self, alert_id):
         with self._lock:
             return self._alerts.get(alert_id)
     
-    def list_alerts(self, limit: int = 100) -> List[Alert]:
+    def list_alerts(self, limit=100):
         with self._lock:
             alerts = sorted(self._alerts.values(), key=lambda a: a.timestamp, reverse=True)
             return alerts[:limit]
     
-    def has_unresolved(self, key: Tuple) -> bool:
+    def has_unresolved(self, key):
         with self._lock:
             return key in self._unresolved
 
 
+# Prevent alert spam
 class SpamGuard:
-    """Prevent alert spam"""
     
-    __slots__ = ('_lock', '_last_alert', '_history', '_muted', 'config')
     
     def __init__(self):
         self._lock = threading.Lock()
-        self._last_alert: Dict[Union[str, Tuple], float] = {}
-        self._history: deque = deque(maxlen=100)
-        self._muted: Dict[Union[str, Tuple], float] = {}
+        self._last_alert = {}
+        self._history = deque(maxlen=100)
+        self._muted = {}
         self.config = settings.spam_guard
     
-    def allow(self, key: Union[str, Tuple], is_critical: bool = False) -> bool:
+    def allow(self, key, is_critical=False):
         now = time.time()
         
         with self._lock:
@@ -157,7 +148,7 @@ class SpamGuard:
             self._history.append((now, key))
             return True
     
-    def mute(self, key: Union[str, Tuple], duration: int):
+    def mute(self, key, duration):
         with self._lock:
             self._muted[key] = time.time() + duration
 

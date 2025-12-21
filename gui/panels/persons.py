@@ -1,6 +1,5 @@
-"""Persons management panel"""
+"""Panel quản lý người dùng"""
 
-from __future__ import annotations
 import shutil
 import cv2
 import threading
@@ -15,16 +14,10 @@ from CTkMessagebox import CTkMessagebox
 from config import settings
 from utils import security
 from gui.styles import Colors, Fonts, Sizes, create_button, create_card, create_entry
-from gui.widgets import log_activity
 
 
+# Panel quản lý người và khuôn mặt
 class PersonsPanel(ctk.CTkFrame):
-    """Persons/faces management panel"""
-    
-    __slots__ = (
-        'face_detector', 'person_list', 'details_panel',
-        'search_entry', 'current_person'
-    )
     
     def __init__(self, parent, face_detector, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
@@ -86,8 +79,8 @@ class PersonsPanel(ctk.CTkFrame):
             font=Fonts.BODY, text_color=Colors.TEXT_MUTED
         ).pack(expand=True)
     
-    def refresh_list(self, search: str = None):
-        """Refresh person list"""
+    # Làm mới danh sách người
+    def refresh_list(self, search=None):
         # Clear list
         for widget in self.person_list.winfo_children():
             widget.destroy()
@@ -118,8 +111,8 @@ class PersonsPanel(ctk.CTkFrame):
         for name in persons:
             self.create_person_card(name)
     
-    def create_person_card(self, name: str):
-        """Create person card"""
+    # Tạo thẻ hiển thị người
+    def create_person_card(self, name):
         card = ctk.CTkFrame(
             self.person_list,
             fg_color=Colors.BG_TERTIARY,
@@ -163,8 +156,8 @@ class PersonsPanel(ctk.CTkFrame):
             font=Fonts.CAPTION, text_color=Colors.TEXT_MUTED
         ).pack(side="right", padx=Sizes.MD)
     
-    def select_person(self, name: str):
-        """Select and show person details"""
+    # Chọn và hiển thị chi tiết người
+    def select_person(self, name):
         self.current_person = name
         
         # Clear details
@@ -197,10 +190,10 @@ class PersonsPanel(ctk.CTkFrame):
         # Gallery
         self.load_gallery(name)
         
-        log_activity(f"Viewing person: {name}", "info")
+        print(f"ℹ️ Viewing person: {name}")
     
-    def load_gallery(self, name: str):
-        """Load person image gallery"""
+    # Tải thư viện ảnh của người
+    def load_gallery(self, name):
         gallery = ctk.CTkScrollableFrame(
             self.details_panel,
             fg_color=Colors.BG_PRIMARY,
@@ -253,8 +246,8 @@ class PersonsPanel(ctk.CTkFrame):
         
         threading.Thread(target=load_thread, daemon=True).start()
     
+    # Dialog thêm người mới
     def add_person(self):
-        """Add new person dialog"""
         dialog = ctk.CTkToplevel(self)
         dialog.title("Add Person")
         dialog.geometry("400x200")
@@ -295,8 +288,8 @@ class PersonsPanel(ctk.CTkFrame):
         
         name_entry.focus()
     
-    def select_photos_for_person(self, name: str):
-        """Select photos for new person"""
+    # Chọn ảnh cho người mới
+    def select_photos_for_person(self, name):
         paths = filedialog.askopenfilenames(
             title=f"Select photos for {name}",
             filetypes=[("Images", "*.jpg *.png *.jpeg")]
@@ -326,10 +319,10 @@ class PersonsPanel(ctk.CTkFrame):
                 message=f"Added '{name}' with {saved} images",
                 icon="check"
             )
-            log_activity(f"Added person: {name}", "success")
+            print(f"✅ Added person: {name}")
     
-    def add_photos(self, name: str):
-        """Add photos to existing person"""
+    # Thêm ảnh cho người đã có
+    def add_photos(self, name):
         paths = filedialog.askopenfilenames(
             title=f"Add photos for {name}",
             filetypes=[("Images", "*.jpg *.png *.jpeg")]
@@ -349,10 +342,10 @@ class PersonsPanel(ctk.CTkFrame):
         self.face_detector.rebuild_embeddings()
         self.load_gallery(name)
         
-        log_activity(f"Added photos for: {name}", "info")
+        print(f"ℹ️ Added photos for: {name}")
     
-    def delete_person(self, name: str):
-        """Delete person"""
+    # Xóa người
+    def delete_person(self, name):
         result = CTkMessagebox(
             title="Confirm Delete",
             message=f"Delete '{name}' and all photos?",
@@ -381,13 +374,13 @@ class PersonsPanel(ctk.CTkFrame):
             ).pack(expand=True)
             
             CTkMessagebox(title="Success", message=f"Deleted '{name}'", icon="check")
-            log_activity(f"Deleted person: {name}", "warning")
+            print(f"⚠️ Deleted person: {name}")
             
         except Exception as e:
             CTkMessagebox(title="Error", message=str(e), icon="cancel")
     
+    # Xây dựng lại vector đặc trưng (embeddings)
     def rebuild_embeddings(self):
-        """Rebuild face embeddings"""
         try:
             count = self.face_detector.rebuild_embeddings()
             CTkMessagebox(
@@ -396,12 +389,12 @@ class PersonsPanel(ctk.CTkFrame):
                 icon="check"
             )
             self.refresh_list()
-            log_activity("Rebuilt embeddings", "success")
+            print("✅ Rebuilt embeddings")
         except Exception as e:
             CTkMessagebox(title="Error", message=str(e), icon="cancel")
     
+    # Xóa toàn bộ dữ liệu khuôn mặt (NGUY HIỂM)
     def delete_all_faces(self):
-        """Delete all face data (DANGEROUS)"""
         result = CTkMessagebox(
             title="⚠️ WARNING: Delete All Faces",
             message="This will DELETE ALL registered persons and face data!\n\nThis action CANNOT be undone.\n\nAre you absolutely sure?",
@@ -445,7 +438,7 @@ class PersonsPanel(ctk.CTkFrame):
             ).pack(expand=True)
             
             CTkMessagebox(title="Success", message="All face data deleted", icon="check")
-            log_activity("Deleted all face data", "warning")
+            print("⚠️ Deleted all face data")
             
         except Exception as e:
             CTkMessagebox(title="Error", message=str(e), icon="cancel")

@@ -1,6 +1,5 @@
-"""Cameras panel"""
+# Panel quản lý Camera
 
-from __future__ import annotations
 import cv2
 import uuid
 import threading
@@ -16,13 +15,9 @@ from gui.styles import Colors, Fonts, Sizes, create_button, create_card
 from gui.widgets import CameraList, log_activity
 
 
+# Xem camera trực tiếp và các điều khiển
 class CamerasPanel(ctk.CTkFrame):
-    """Live camera view and controls"""
     
-    __slots__ = (
-        'camera_manager', 'state', 'selected_camera', 'video_label',
-        'camera_list', 'brightness', 'running'
-    )
     
     def __init__(self, parent, camera_manager, state_manager, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
@@ -98,12 +93,12 @@ class CamerasPanel(ctk.CTkFrame):
         )
         self.camera_list.pack(fill="both", expand=True, padx=Sizes.SM, pady=Sizes.SM)
     
+    # Bắt đầu vòng lặp cập nhật video
     def start_video_loop(self):
-        """Start video update loop"""
         self.update_video()
     
+    # Cập nhật khung hình video
     def update_video(self):
-        """Update video frame"""
         if not self.running:
             return
         
@@ -152,17 +147,17 @@ class CamerasPanel(ctk.CTkFrame):
         refresh_rate = 33 if self.state.is_detection_enabled() else 50
         self.after(refresh_rate, self.update_video)
     
+    # Chọn camera để xem
     def select_camera(self, source: str):
-        """Select camera to view"""
         self.selected_camera.set(source)
         log_activity(f"Viewing camera: {source}", "info")
     
+    # Hiển thị dialog thêm camera
     def add_camera(self):
-        """Show add camera dialog"""
         from gui.dialogs import AddCameraDialog
         
         def on_success(source_id):
-            """Called when camera is added successfully"""
+            # Called when camera is added successfully
             camera = self.camera_manager.get_camera(source_id)
             if camera and self.camera_list:
                 self.camera_list.add_camera(source_id, camera)
@@ -172,8 +167,8 @@ class CamerasPanel(ctk.CTkFrame):
         dialog = AddCameraDialog(self, self.camera_manager, on_success=on_success)
         dialog.grab_set()
     
+    # Chụp ảnh từ camera hiện tại
     def take_snapshot(self):
-        """Take snapshot from current camera"""
         selected = self.selected_camera.get()
         if not selected:
             return
@@ -191,12 +186,12 @@ class CamerasPanel(ctk.CTkFrame):
         
         log_activity(f"Snapshot saved: {img_path.name}", "success")
     
+    # Bật/tắt ghi hình
     def toggle_record(self):
-        """Toggle recording"""
         log_activity("Recording toggled", "info")
     
+    # Dừng vòng lặp video
     def stop(self):
-        """Stop video loop"""
         self.running = False
     
     def destroy(self):

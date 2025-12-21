@@ -1,6 +1,5 @@
-"""Main GUI application"""
+# Ứng dụng GUI chính
 
-from __future__ import annotations
 import threading
 from typing import Optional
 
@@ -14,13 +13,9 @@ from gui.panels import CamerasPanel, PersonsPanel, SettingsPanel
 from gui.widgets.gallery import GalleryPanel
 
 
+# Cửa sổ chính của ứng dụng
 class GuardianApp:
-    """Main application window"""
     
-    __slots__ = (
-        'root', 'camera_manager', 'face_detector', 'state',
-        'tabs', 'panels', 'current_tab'
-    )
     
     def __init__(self, root: ctk.CTk, camera_manager, face_detector, state_manager):
         self.root = root
@@ -37,8 +32,8 @@ class GuardianApp:
         log_system("GUI initialized", "success")
         log_activity("Guardian started", "success")
     
+    # Cấu hình cửa sổ
     def setup_window(self):
-        """Configure window"""
         set_appearance_mode("dark")
         
         self.root.title("Guardian Security System")
@@ -49,8 +44,8 @@ class GuardianApp:
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
     
+    # Xây dựng giao diện chính
     def build_ui(self):
-        """Build main UI"""
         # Main container
         container = ctk.CTkFrame(self.root, fg_color=Colors.BG_PRIMARY)
         container.grid(row=0, column=0, sticky="nsew")
@@ -96,8 +91,8 @@ class GuardianApp:
         )
         self.panels['settings'].pack(fill="both", expand=True)
     
+    # Xử lý khi chuyển tab
     def on_tab_change(self):
-        """Handle tab change"""
         selected = self.tabs.get()
         
         if "Cameras" in selected:
@@ -115,19 +110,19 @@ class GuardianApp:
         
         log_activity(f"Switched to {self.current_tab}", "info")
     
+    # Dọn dẹp khi tắt
     def shutdown(self):
-        """Cleanup on shutdown"""
         if 'cameras' in self.panels:
             self.panels['cameras'].stop()
 
 
+# Chạy ứng dụng giao diện
 def run_gui(camera_manager, face_detector, state_manager, main_app=None):
-    """Run the GUI application"""
     root = ctk.CTk()
     app = GuardianApp(root, camera_manager, face_detector, state_manager)
     
     def on_close():
-        """Handle window close event"""
+        # Handle window close event
         try:
             # Stop GUI components first
             app.shutdown()

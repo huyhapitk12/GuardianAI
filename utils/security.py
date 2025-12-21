@@ -1,26 +1,21 @@
-"""Security utilities - encryption/decryption"""
-
-from __future__ import annotations
+# Các tiện ích bảo mật - mã hóa/giải mã
 import cv2
 import numpy as np
 from pathlib import Path
-from typing import Optional, Union
 from cryptography.fernet import Fernet
-
 from config import settings
 
 
+# Xử lý mã hóa/giải mã file
 class SecurityManager:
-    """Handle file encryption/decryption"""
     
-    __slots__ = ('_key', '_cipher', '_key_file')
     
     def __init__(self):
         self._key_file = settings.base_dir / 'secret.key'
         self._key = self._load_or_create_key()
         self._cipher = Fernet(self._key)
     
-    def _load_or_create_key(self) -> bytes:
+    def _load_or_create_key(self):
         if self._key_file.exists():
             return self._key_file.read_bytes()
         
@@ -28,14 +23,14 @@ class SecurityManager:
         self._key_file.write_bytes(key)
         return key
     
-    def encrypt(self, data: bytes) -> bytes:
+    def encrypt(self, data):
         return self._cipher.encrypt(data)
     
-    def decrypt(self, data: bytes) -> bytes:
+    def decrypt(self, data):
         return self._cipher.decrypt(data)
     
-    def encrypt_file(self, path: Union[str, Path]):
-        """Encrypt file in place"""
+    # Mã hóa file tại chỗ (ghi đè file gốc)
+    def encrypt_file(self, path):
         path = Path(path)
         if not path.exists():
             return
@@ -43,15 +38,15 @@ class SecurityManager:
         data = path.read_bytes()
         path.write_bytes(self.encrypt(data))
     
-    def decrypt_file(self, path: Union[str, Path]) -> Optional[bytes]:
-        """Decrypt file and return bytes"""
+    # Giải mã file và trả về bytes
+    def decrypt_file(self, path):
         try:
             return self.decrypt(Path(path).read_bytes())
         except Exception:
             return None
     
-    def save_image(self, path: Union[str, Path], image: np.ndarray) -> bool:
-        """Save image with encryption"""
+    # Lưu ảnh có mã hóa
+    def save_image(self, path, image):
         try:
             _, encoded = cv2.imencode('.jpg', image)
             encrypted = self.encrypt(encoded.tobytes())
@@ -60,8 +55,8 @@ class SecurityManager:
         except Exception:
             return False
     
-    def load_image(self, path: Union[str, Path]) -> Optional[np.ndarray]:
-        """Load and decrypt image"""
+    # Tải và giải mã ảnh
+    def load_image(self, path):
         try:
             decrypted = self.decrypt_file(path)
             if decrypted:
@@ -74,5 +69,5 @@ class SecurityManager:
             return None
 
 
-# Global instance
+# Biến toàn cục
 security = SecurityManager()

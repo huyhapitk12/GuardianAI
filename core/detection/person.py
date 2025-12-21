@@ -23,12 +23,11 @@ from config import settings, AlertType
 # =============================================================================
 # Mỗi người trong camera được gán một Track
 # Track lưu: vị trí, tên, trạng thái nhận diện,...
-# =============================================================================
 class Track:
     
+    # bbox = bounding box = hình chữ nhật bao quanh người
+    # Dạng (x1, y1, x2, y2): góc trên-trái và góc dưới-phải
     def __init__(self, bbox):
-        # bbox = bounding box = hình chữ nhật bao quanh người
-        # Dạng (x1, y1, x2, y2): góc trên-trái và góc dưới-phải
         self.bbox = bbox
         
         # Tên người (mặc định là "Stranger" = người lạ)
@@ -67,7 +66,6 @@ class Track:
 # CLASS PERSON TRACKER - THEO DÕI VÀ NHẬN DIỆN NGƯỜI
 # =============================================================================
 # Đây là class chính để phát hiện và theo dõi người
-# =============================================================================
 class PersonTracker:
     
     def __init__(self, face_detector=None, shared_model=None):
@@ -95,11 +93,9 @@ class PersonTracker:
         self.next_reid = 1
         self.alerted_reids = set()
 
+    # Khởi tạo tracker
+    # Trả về: True nếu thành công
     def initialize(self):
-        """
-        Khởi tạo tracker
-        Trả về: True nếu thành công
-        """
         # Nếu đã có model từ bên ngoài
         if self.model is not None:
             if SORTTracker:
@@ -131,28 +127,24 @@ class PersonTracker:
             print(f"❌ Lỗi khởi tạo Person Tracker: {e}")
             return False
     
+    # Lấy bộ nhận diện khuôn mặt
     def get_face_detector(self):
-        """Lấy bộ nhận diện khuôn mặt"""
         return self.face_detector
     
+    # Đặt bộ nhận diện khuôn mặt
     def set_face_detector(self, detector):
-        """Đặt bộ nhận diện khuôn mặt"""
         self.face_detector = detector
     
+    # Phát hiện người trong frame
+    # frame: Hình ảnh cần kiểm tra
+    # conf: Ngưỡng tin cậy (tùy chọn)
+    # Trả về: Danh sách bounding box của người phát hiện được
     def detect(self, frame, conf=None):
-        """
-        Phát hiện người trong frame
-        
-        frame: Hình ảnh cần kiểm tra
-        conf: Ngưỡng tin cậy (tùy chọn)
-        
-        Trả về: Danh sách bounding box của người phát hiện được
-        """
         if not self.model:
             return []
         
         # Lấy ngưỡng tin cậy
-        threshold = conf or settings.get('detection.person_confidence', 0.5)
+        threshold = conf or settings.get('detection.person_confidence_threshold', 0.5)
         yolo_format = settings.get('models.yolo_format', 'openvino')
         
         try:
@@ -171,17 +163,13 @@ class PersonTracker:
             print(f"⚠️ Lỗi phát hiện người: {e}")
             return []
     
+    # Cập nhật tracker với các detection mới
+    # detections: Danh sách bounding box người phát hiện được
+    # frame: Frame gốc (kích thước lớn)
+    # scale_x, scale_y: Tỉ lệ scale từ frame nhỏ lên frame lớn
+    # skip_face_check: Bỏ qua kiểm tra khuôn mặt (dùng khi camera IR)
+    # Trả về: Dictionary các track đang active
     def update(self, detections, frame, scale_x=1.0, scale_y=1.0, skip_face_check=False):
-        """
-        Cập nhật tracker với các detection mới
-        
-        detections: Danh sách bounding box người phát hiện được
-        frame: Frame gốc (kích thước lớn)
-        scale_x, scale_y: Tỉ lệ scale từ frame nhỏ lên frame lớn
-        skip_face_check: Bỏ qua kiểm tra khuôn mặt (dùng khi camera IR)
-        
-        Trả về: Dictionary các track đang active
-        """
         now = time.time()
         
         # Scale bounding box từ frame xử lý nhỏ lên frame gốc lớn
@@ -213,12 +201,10 @@ class PersonTracker:
         
         return self.tracks
     
+    # Cập nhật bằng SORT tracker
+    # SORT: Simple Online and Realtime Tracking
+    # Hoạt động: Dùng Kalman Filter để dự đoán vị trí + Hungarian Algorithm để match
     def update_sort(self, detections, frame, now):
-        """
-        Cập nhật bằng SORT tracker
-        SORT: Simple Online and Realtime Tracking
-        Hoạt động: Dùng Kalman Filter để dự đoán vị trí + Hungarian Algorithm để match
-        """
         try:
             # Chuyển sang định dạng supervision cần
             xyxy = np.array(detections, dtype=float)
@@ -237,17 +223,13 @@ class PersonTracker:
             # Nếu SORT lỗi, fallback về IOU matching
             self.update_iou(detections, now)
     
+    # Cập nhật bằng IOU matching (phương pháp đơn giản)
+    # IOU = Intersection over Union (Tỉ lệ giao / hợp)
+    # Giá trị từ 0 đến 1:
+    # - 0 = không trùng chút nào
+    # - 1 = trùng hoàn toàn
+    # Ý tưởng: Box ở frame hiện tại khớp với box nào ở frame trước có IOU cao nhất
     def update_iou(self, detections, now):
-        """
-        Cập nhật bằng IOU matching (phương pháp đơn giản)
-        
-        IOU = Intersection over Union (Tỉ lệ giao / hợp)
-        Giá trị từ 0 đến 1:
-        - 0 = không trùng chút nào
-        - 1 = trùng hoàn toàn
-        
-        Ý tưởng: Box ở frame hiện tại khớp với box nào ở frame trước có IOU cao nhất
-        """
         # Nếu chưa có track nào, tạo mới hết
         if not self.tracks:
             for bbox in detections:
@@ -289,8 +271,8 @@ class PersonTracker:
                 self.tracks[self.next_id] = track
                 self.next_id += 1
     
+    # Cập nhật hoặc tạo mới một track
     def update_track(self, tid, bbox, now):
-        """Cập nhật hoặc tạo mới một track"""
         if tid not in self.tracks:
             track = Track(bbox)
             track.last_seen = now
@@ -299,12 +281,10 @@ class PersonTracker:
             self.tracks[tid].bbox = bbox
             self.tracks[tid].last_seen = now
     
+    # Kiểm tra khuôn mặt của một track
+    # Nếu khớp với người đã biết -> cập nhật tên
+    # Đã xác nhận rồi, không cần kiểm tra nữa
     def check_face(self, tid, track, frame, now):
-        """
-        Kiểm tra khuôn mặt của một track
-        Nếu khớp với người đã biết -> cập nhật tên
-        """
-        # Đã xác nhận rồi, không cần kiểm tra nữa
         if track.confirmed_name:
             return
         
@@ -353,21 +333,26 @@ class PersonTracker:
             track.face_hits += 1
             track.name = name
             track.distance = dist
+            
+            # Xác nhận tên nếu đủ số lần nhận diện
+            confirm_threshold = settings.get('tracker.known_person_confirm_frames', 4)
+            if track.face_hits >= confirm_threshold and not track.confirmed_name:
+                track.confirmed_name = track.name
+                print(f"✅ Đã xác nhận: {track.name}")
         else:
-            track.face_hits = max(0, track.face_hits - 1)
-            if track.face_hits == 0:
+            # Giảm face_hits chậm hơn (chỉ giảm 0.5 thay vì 1)
+            # Và chỉ reset về Stranger khi xuống âm nhiều
+            track.face_hits = max(-3, track.face_hits - 0.5)
+            if track.face_hits <= -3:
                 track.name = "Stranger"
+                track.face_hits = 0
     
+    # Cập nhật ReID (Re-Identification)
+    # ReID giúp nhận ra cùng một người khi họ:
+    # - Đi ra khỏi camera rồi quay lại
+    # - Bị che khuất tạm thời
+    # Dùng embedding (vector đặc trưng) của khuôn mặt để so sánh
     def update_reid(self, track, embedding, now):
-        """
-        Cập nhật ReID (Re-Identification)
-        
-        ReID giúp nhận ra cùng một người khi họ:
-        - Đi ra khỏi camera rồi quay lại
-        - Bị che khuất tạm thời
-        
-        Dùng embedding (vector đặc trưng) của khuôn mặt để so sánh
-        """
         ttl = settings.get('reid.ttl_seconds', 30)  # Thời gian sống
         threshold = settings.get('reid.distance_threshold', 0.35)  # Ngưỡng khoảng cách
         
@@ -397,12 +382,9 @@ class PersonTracker:
             self.reid_memory[rid] = {'embedding': embedding, 'last_seen': now}
             track.reid_id = rid
     
+    # Kiểm tra xem có track nào cần gửi cảnh báo không
+    # Trả về: List các tuple (track_id, alert_type, metadata)
     def check_alerts(self):
-        """
-        Kiểm tra xem có track nào cần gửi cảnh báo không
-        
-        Trả về: List các tuple (track_id, alert_type, metadata)
-        """
         alerts = []
         
         # Lấy config
@@ -440,15 +422,12 @@ class PersonTracker:
         
         return alerts
     
+    # Vẽ các track lên frame
+    # Màu:
+    # - Xanh lá: Người quen đã nhận diện
+    # - Đỏ: Người lạ (đã gửi cảnh báo)
+    # - Vàng: Đang theo dõi (chưa xác định)
     def draw(self, frame):
-        """
-        Vẽ các track lên frame
-        
-        Màu:
-        - Xanh lá: Người quen đã nhận diện
-        - Đỏ: Người lạ (đã gửi cảnh báo)
-        - Vàng: Đang theo dõi (chưa xác định)
-        """
         for tid, track in self.tracks.items():
             x1, y1, x2, y2 = map(int, track.bbox)
             
@@ -474,21 +453,17 @@ class PersonTracker:
         
         return frame
     
+    # Tính IOU (Intersection over Union) giữa 2 box
+    # IOU = Diện tích giao / Diện tích hợp
+    # Ví dụ minh họa:
+    # ┌─────────┐
+    # │  Box1   │
+    # │    ┌────┼───┐
+    # └────┼────┘   │
+    #     │  Box2  │
+    #     └────────┘
+    # Phần giao là vùng chồng lấn giữa 2 box
     def calc_iou(self, box1, box2):
-        """
-        Tính IOU (Intersection over Union) giữa 2 box
-        
-        IOU = Diện tích giao / Diện tích hợp
-        
-        Ví dụ minh họa:
-        ┌─────────┐
-        │  Box1   │
-        │    ┌────┼───┐
-        └────┼────┘   │
-            │  Box2  │
-            └────────┘
-        Phần giao là vùng chồng lấn giữa 2 box
-        """
         x1, y1, x2, y2 = box1
         x1_, y1_, x2_, y2_ = box2
         
@@ -511,11 +486,9 @@ class PersonTracker:
         # IOU = Giao / Hợp
         return inter / union if union > 0 else 0
     
+    # Kiểm tra có mối nguy hiểm đang hoạt động không
+    # (Người lạ chưa xử lý)
     def has_active_threats(self):
-        """
-        Kiểm tra có mối nguy hiểm đang hoạt động không
-        (Người lạ chưa xử lý)
-        """
         now = time.time()
         timeout = settings.get('tracker.timeout_seconds', 30)
         
@@ -530,6 +503,6 @@ class PersonTracker:
         
         return False
     
+    # Kiểm tra có track nào đang active không
     def has_tracks(self):
-        """Kiểm tra có track nào đang active không"""
         return bool(self.tracks)

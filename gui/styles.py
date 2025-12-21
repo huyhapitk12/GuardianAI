@@ -1,6 +1,5 @@
-"""GUI styling constants and widget factories"""
+# GUI styling constants and widget factories
 
-from __future__ import annotations
 from dataclasses import dataclass
 from typing import Optional, Tuple
 import customtkinter as ctk
@@ -8,7 +7,7 @@ import customtkinter as ctk
 
 @dataclass(frozen=True)
 class Colors:
-    """Color palette"""
+    # Color palette
     # Backgrounds
     BG_PRIMARY = "#0F172A"
     BG_SECONDARY = "#1E293B"
@@ -44,7 +43,7 @@ class Colors:
 
 @dataclass(frozen=True)
 class Sizes:
-    """Size constants"""
+    # Size constants
     # Spacing
     XS = 4
     SM = 8
@@ -69,7 +68,7 @@ class Sizes:
 
 
 class Fonts:
-    """Font definitions"""
+    # Font definitions
     FAMILY = "Segoe UI"
     
     # Sizes
@@ -97,16 +96,15 @@ def create_button(
     icon: str = None,
     **kwargs
 ) -> ctk.CTkButton:
-    """Create styled button
+    # Create styled button
     
-    Args:
-        parent: Parent widget
-        text: Button text
-        variant: "primary", "secondary", "ghost", "danger", "success"
-        size: "small", "medium", "large"
-        icon: Optional icon prefix
-        **kwargs: Additional CTkButton arguments (override defaults)
-    """
+    # Args:
+    #     parent: Parent widget
+    #     text: Button text
+    #     variant: "primary", "secondary", "ghost", "danger", "success"
+    #     size: "small", "medium", "large"
+    #     icon: Optional icon prefix
+    #     **kwargs: Additional CTkButton arguments (override defaults)
     
     VARIANTS = {
         "primary": {
@@ -164,7 +162,7 @@ def create_button(
 
 
 def create_card(parent, **kwargs) -> ctk.CTkFrame:
-    """Create card frame"""
+    # Create card frame
     defaults = {
         "fg_color": Colors.BG_SECONDARY,
         "corner_radius": Sizes.RADIUS_LG,
@@ -181,7 +179,7 @@ def create_entry(
     icon: str = None,
     **kwargs
 ) -> Tuple[ctk.CTkFrame, ctk.CTkEntry]:
-    """Create styled entry with optional icon"""
+    # Create styled entry with optional icon
     
     frame = ctk.CTkFrame(parent, fg_color="transparent")
     
@@ -220,7 +218,7 @@ def create_switch(
     command=None,
     **kwargs
 ) -> ctk.CTkSwitch:
-    """Create styled switch"""
+    # Create styled switch
     defaults = {
         "text": text,
         "variable": variable,
@@ -241,7 +239,7 @@ def create_label(
     color: str = None,
     **kwargs
 ) -> ctk.CTkLabel:
-    """Create styled label"""
+    # Create styled label
     
     STYLES = {
         "title": {"font": Fonts.TITLE_MD, "text_color": Colors.TEXT_PRIMARY},
@@ -267,7 +265,7 @@ def create_slider(
     command=None,
     **kwargs
 ) -> ctk.CTkSlider:
-    """Create styled slider"""
+    # Create styled slider
     defaults = {
         "from_": from_,
         "to": to,
@@ -293,7 +291,7 @@ def create_option_menu(
     command=None,
     **kwargs
 ) -> ctk.CTkOptionMenu:
-    """Create styled option menu"""
+    # Create styled option menu
     defaults = {
         "values": values,
         "fg_color": Colors.BG_TERTIARY,
@@ -314,7 +312,7 @@ def create_option_menu(
 
 
 def create_progress_bar(parent, **kwargs) -> ctk.CTkProgressBar:
-    """Create styled progress bar"""
+    # Create styled progress bar
     defaults = {
         "progress_color": Colors.PRIMARY,
         "fg_color": Colors.BG_TERTIARY,
@@ -325,7 +323,7 @@ def create_progress_bar(parent, **kwargs) -> ctk.CTkProgressBar:
 
 
 def create_scrollable_frame(parent, **kwargs) -> ctk.CTkScrollableFrame:
-    """Create styled scrollable frame"""
+    # Create styled scrollable frame
     defaults = {
         "fg_color": Colors.BG_PRIMARY,
         "corner_radius": Sizes.RADIUS_MD,

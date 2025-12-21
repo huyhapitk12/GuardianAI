@@ -1,6 +1,6 @@
 # gui/widgets/activity.py
 def log_activity(message: str, activity_type: str = "info"):
-    """Log activity - just print"""
+    # Log activity - just print
     icons = {
         "info": "ℹ️",
         "success": "✅",
@@ -14,7 +14,7 @@ def log_activity(message: str, activity_type: str = "info"):
 
 
 def log_system(message: str, level: str = "info"):
-    """Log system - just print"""
+    # Log system - just print
     icons = {
         "info": "ℹ️",
         "success": "✅",

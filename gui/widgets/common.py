@@ -1,14 +1,12 @@
-"""Common reusable widgets"""
+# Các widget chung có thể tái sử dụng
 
-from __future__ import annotations
 import customtkinter as ctk
 from gui.styles import Colors, Fonts, Sizes, create_card
 
 
+# Badge chỉ báo trạng thái
 class StatusBadge(ctk.CTkFrame):
-    """Status indicator badge"""
     
-    __slots__ = ('_label',)
     
     COLORS = {
         "success": Colors.SUCCESS,
@@ -38,10 +36,9 @@ class StatusBadge(ctk.CTkFrame):
         self._label.configure(text=text)
 
 
+# Thẻ hiển thị thống kê
 class StatCard(ctk.CTkFrame):
-    """Statistics display card"""
     
-    __slots__ = ('_value_label', '_subtitle_label')
     
     def __init__(
         self, parent,
@@ -76,8 +73,8 @@ class StatCard(ctk.CTkFrame):
         self._value_label.configure(text=str(value))
 
 
+# Nút chỉ có icon
 class IconButton(ctk.CTkButton):
-    """Icon-only button"""
     
     def __init__(self, parent, icon: str, command=None, size: int = 32, **kwargs):
         super().__init__(

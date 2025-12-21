@@ -1,83 +1,74 @@
-# core/detection/fire_tracking.py
-"""Fire object tracking with Red Alert Mode"""
-
-from __future__ import annotations
+# Theo dõi lửa
 import time
 import numpy as np
-from dataclasses import dataclass, field
-from typing import Dict, List, Optional, Tuple
 from collections import deque
-
 from config import settings
 
 
-@dataclass
 class TrackedFireObject:
-    """Single tracked fire object"""
-    id: int
-    bbox: Tuple[int, int, int, int]
-    area: float
-    first_seen: float
-    last_seen: float
-    age: int = 0  # frames
-    stability_score: float = 0.0
-    matched_count: int = 0
+    # Class này lưu thông tin một đám cháy
+    def __init__(self, id, bbox, area, first_seen, last_seen):
+        self.id = id
+        self.bbox = bbox
+        self.area = area
+        self.first_seen = first_seen
+        self.last_seen = last_seen
+        self.age = 0  # frames
+        self.stability_score = 0.0
+        self.matched_count = 0
     
-    def update(self, bbox: Tuple, area: float, now: float):
-        """Update object with new detection"""
+    def update(self, bbox, area, now):
+        # Update vị trí mới
         self.bbox = bbox
         self.area = area
         self.last_seen = now
         self.age += 1
         self.matched_count += 1
         
-        # Calculate stability (how consistent the detections are)
+        # Tính độ ổn định
         if self.age > 0:
             self.stability_score = min(1.0, self.matched_count / self.age)
 
 
 class RedAlertMode:
-    """Red Alert Mode manager"""
-    
-    __slots__ = ('active', 'until', 'lockdown_duration')
+    # Quản lý chế độ báo động đỏ
     
     def __init__(self):
         self.active = False
         self.until = 0.0
         self.lockdown_duration = settings.get('fire_logic.lockdown_seconds', 300)
+        # print("init red alert")
     
-    def activate(self, now: float):
-        """Activate Red Alert Mode"""
+    def activate(self, now):
+        # Kích hoạt
         if not self.active:
-            print(f"🔴 RED ALERT ACTIVATED - Lockdown for {self.lockdown_duration}s")
+            print(f"BAO DONG DO!!! - Lockdown {self.lockdown_duration}s")
         self.active = True
         self.until = now + self.lockdown_duration
     
-    def is_active(self, now: float) -> bool:
-        """Check if Red Alert is currently active"""
+    def is_active(self, now):
+        # Kiểm tra xem có đang active không
         if self.active and now > self.until:
-            print("🟢 Red Alert expired")
+            print("Het bao dong do")
             self.active = False
             self.until = 0.0
         return self.active
     
     def reset(self):
-        """Reset Red Alert Mode"""
+        # Reset 
         self.active = False
         self.until = 0.0
 
 
 class FireTracker:
-    """Advanced fire tracking with growth monitoring and Red Alert"""
-    
-    __slots__ = ('objects', 'next_id', 'red_alert', 'recent_detections',
-                 'yellow_frames', 'config')
+    # Class theo dõi lửa
     
     def __init__(self):
-        self.objects: Dict[int, TrackedFireObject] = {}
+        self.objects = {}
         self.next_id = 1
+        # self.red_alert = None
         self.red_alert = RedAlertMode()
-        self.recent_detections: deque = deque(maxlen=150)
+        self.recent_detections = deque(maxlen=150)
         self.yellow_frames = deque(maxlen=20)
         
         # Load config
@@ -91,48 +82,48 @@ class FireTracker:
             'min_stability': settings.get('fire_logic.object_analysis.min_stability_for_warning', 0.8),
             'max_age': settings.get('fire_logic.object_analysis.max_age', 20),
         }
+        self.current_growth_rate = 0.0 # Tỉ lệ tăng trưởng (1.0 = không đổi)
+        print("khoi tao fire tracker")
     
-    def update(self, detections: List[dict], now: float) -> Tuple[bool, bool, bool]:
-        """
-        Update tracked objects and check alert conditions
+    def update(self, detections, now):
+        # Hàm update chính
+        # print("updating fire tracker...")
         
-        Returns:
-            (should_alert, is_yellow, is_red_alert)
-        """
-        # Update objects with IOU matching
+        # Update objects
         self.match_and_update(detections, now)
         
-        # Clean up old objects
+        # Dọn dẹp
         self.cleanup(now)
         
-        # Track recent detections for growth analysis
+        # Track lịch xử để phân tích sự phát triển của lửa
         if detections:
             total_area = sum(d['area'] for d in detections)
             self.recent_detections.append({'time': now, 'area': total_area})
         
-        # Check Red Alert conditions
+        # Check Red Alert
         is_red = self.check_red_alert(detections, now)
         
-        # Yellow alert: need consecutive frames
+        # Yellow alert: cần số frame liên tục
         has_fire = len(detections) > 0
         self.yellow_frames.append(has_fire)
         
         consecutive_count = sum(1 for x in self.yellow_frames if x)
         is_yellow = consecutive_count >= self.config['yellow_alert_frames']
         
-        # Determine if should send alert
+        
+        # Quyết định
         should_alert = is_red or (is_yellow and not self.red_alert.active)
         
         return should_alert, is_yellow, is_red
     
-    def match_and_update(self, detections: List[dict], now: float):
-        """Match detections with tracked objects using IOU"""
+    def match_and_update(self, detections, now):
+        # Match detection với object cũ bằng IOU
         if not detections:
             return
         
         # Calculate IOU matrix
         matched_dets = set()
-        matched_objs = set()
+        # matched_objs = set() # unused
         
         for obj_id, obj in self.objects.items():
             best_iou, best_idx = 0, -1
@@ -148,11 +139,12 @@ class FireTracker:
                 det = detections[best_idx]
                 obj.update(det['bbox'], det['area'], now)
                 matched_dets.add(best_idx)
-                matched_objs.add(obj_id)
+                # matched_objs.add(obj_id)
         
-        # Create new objects for unmatched detections
+        # Tạo mới nếu không match được
         for i, det in enumerate(detections):
             if i not in matched_dets:
+                print(f"phat hien dam chay moi id={self.next_id}")
                 self.objects[self.next_id] = TrackedFireObject(
                     id=self.next_id,
                     bbox=det['bbox'],
@@ -162,51 +154,56 @@ class FireTracker:
                 )
                 self.next_id += 1
     
-    def cleanup(self, now: float):
-        """Remove stale objects"""
+    def cleanup(self, now):
+        # Xóa object cũ
         max_age = self.config['max_age']
+        
+        # Dùng dict comprehension
         self.objects = {
             k: v for k, v in self.objects.items()
             if (now - v.last_seen) < 3.0 or v.age < max_age
         }
     
-    def check_red_alert(self, detections: List[dict], now: float) -> bool:
-        """Check if Red Alert should be triggered"""
+    def check_red_alert(self, detections, now):
+        # Check xem có cần báo động đỏ không
+        
         # Check if already in Red Alert
         if self.red_alert.is_active(now):
-            # Stay in Red Alert if still detecting fire
+            # Extend lockdown nếu vẫn đang cháy
             if detections:
-                self.red_alert.activate(now)  # Extend lockdown
+                self.red_alert.activate(now) 
                 return True
             return False
         
-        # Condition 1: Large fire area
+        # DK 1: Cháy to
         if detections:
             total_area = sum(d['area'] for d in detections)
             if total_area > self.config['area_threshold']:
+                print("chay to qua -> red alert")
                 self.red_alert.activate(now)
                 return True
         
-        # Condition 2: Rapid growth
+        # DK 2: Phát triển nhanh
         if self.check_fire_growth():
+            print("lua lan nhanh -> red alert")
             self.red_alert.activate(now)
             return True
         
-        # Condition 3: Multiple stable fire objects
+        # DK 3: Nhiều đám cháy ổn định
         stable_objects = [
             obj for obj in self.objects.values()
             if obj.age >= self.config['min_age_warning']
             and obj.stability_score >= self.config['min_stability']
         ]
         if len(stable_objects) >= 2:
-            print(f"🔥 {len(stable_objects)} stable fire objects detected")
+            print(f"co {len(stable_objects)} dam chay on dinh -> red alert")
             self.red_alert.activate(now)
             return True
         
         return False
     
-    def check_fire_growth(self) -> bool:
-        """Check if fire is growing rapidly"""
+    def check_fire_growth(self):
+        # Check xem lửa có lớn nhanh không
         if len(self.recent_detections) < 5:
             return False
         
@@ -214,29 +211,35 @@ class FireTracker:
         window = self.config['growth_window']
         threshold = self.config['growth_threshold']
         
-        # Get current detections (last 1s)
+        # Lấy detection hiện tại (1s)
         recent = [d for d in self.recent_detections if now - d['time'] < 1.0]
         if not recent:
             return False
         avg_current = np.mean([d['area'] for d in recent])
         
-        # Get past detections (around growth_window seconds ago)
+        # Lấy detection quá khứ
         past = [d for d in self.recent_detections 
                 if window - 1.0 < now - d['time'] < window + 1.0]
         if not past:
             return False
         avg_past = np.mean([d['area'] for d in past])
         
-        # Check growth rate
-        if avg_past > 0 and avg_current > avg_past * threshold:
-            print(f"🔥 RAPID GROWTH: {avg_past:.4f} → {avg_current:.4f} ({avg_current/avg_past:.2f}x)")
-            return True
+        # So sánh
+        if avg_past > 0:
+            rate = avg_current / avg_past
+            self.current_growth_rate = rate
+            
+            if rate > threshold:
+                print(f"tang truong nhanh: {avg_past:.4f} -> {avg_current:.4f} (x{rate:.2f})")
+                return True
+        else:
+             self.current_growth_rate = 0.0
         
         return False
     
-    @staticmethod
-    def calc_iou(box1: Tuple, box2: Tuple) -> float:
-        """Calculate IOU between boxes"""
+    
+    def calc_iou(self, box1, box2):
+        # Tính IOU
         x1, y1, x2, y2 = box1
         x1_, y1_, x2_, y2_ = box2
         
@@ -252,17 +255,16 @@ class FireTracker:
         
         return inter / union if union > 0 else 0
     
-    @property
-    def is_red_alert(self) -> bool:
-        """Check if currently in Red Alert"""
+    def get_is_red_alert(self):
+        # Getter
         return self.red_alert.is_active(time.time())
     
-    @property
-    def tracked_objects(self) -> List[TrackedFireObject]:
+    
+    def get_tracked_objects(self):
         return list(self.objects.values())
 
-    @property
-    def is_yellow_alert(self) -> bool:
-        """Check if currently in Yellow Alert"""
+
+    def get_is_yellow_alert(self):
+        # Getter
         consecutive_count = sum(1 for x in self.yellow_frames if x)
         return consecutive_count >= self.config['yellow_alert_frames']

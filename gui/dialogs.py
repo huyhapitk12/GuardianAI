@@ -1,6 +1,5 @@
-"""GUI dialogs for Guardian application"""
+# GUI dialogs for Guardian application
 
-from __future__ import annotations
 import customtkinter as ctk
 
 from gui.styles import Colors, Fonts, Sizes, create_button
@@ -8,7 +7,7 @@ from gui.widgets import log_activity
 
 
 class AddCameraDialog(ctk.CTkToplevel):
-    """Dialog for adding a new camera"""
+    # Dialog for adding a new camera
     
     def __init__(self, parent, camera_manager, on_success=None):
         super().__init__(parent)
@@ -21,7 +20,7 @@ class AddCameraDialog(ctk.CTkToplevel):
         self.build_ui()
     
     def setup_window(self):
-        """Configure dialog window"""
+        # Configure dialog window
         self.title("Add Camera")
         self.geometry("500x400")
         self.resizable(False, False)
@@ -42,7 +41,7 @@ class AddCameraDialog(ctk.CTkToplevel):
         self.configure(fg_color=Colors.BG_PRIMARY)
     
     def build_ui(self):
-        """Build dialog UI"""
+        # Build dialog UI
         # Main container
         container = ctk.CTkFrame(self, fg_color=Colors.BG_SECONDARY, corner_radius=Sizes.RADIUS_LG)
         container.pack(fill="both", expand=True, padx=Sizes.LG, pady=Sizes.LG)
@@ -132,7 +131,7 @@ class AddCameraDialog(ctk.CTkToplevel):
         self.source_entry.focus()
     
     def on_add(self):
-        """Handle add camera"""
+        # Handle add camera
         source_str = self.source_entry.get().strip()
         
         if not source_str:
@@ -164,9 +163,9 @@ class AddCameraDialog(ctk.CTkToplevel):
             self.show_status(f"❌ Error: {str(e)}", Colors.ERROR)
     
     def on_cancel(self):
-        """Handle cancel"""
+        # Handle cancel
         self.destroy()
     
     def show_status(self, message: str, color: str):
-        """Show status message"""
+        # Show status message
         self.status_label.configure(text=message, text_color=color)

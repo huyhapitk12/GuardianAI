@@ -1,6 +1,5 @@
-"""Camera-related widgets"""
+# Các widget liên quan đến camera
 
-from __future__ import annotations
 import cv2
 import threading
 from typing import Callable, Dict, Optional
@@ -12,10 +11,9 @@ from gui.styles import Colors, Fonts, Sizes, create_button, create_card, create_
 from gui.widgets.activity import log_activity
 
 
+# Thẻ điều khiển camera riêng lẻ
 class CameraCard(ctk.CTkFrame):
-    """Individual camera control card"""
     
-    __slots__ = ('source', 'camera', 'state', 'labels', 'switches', 'on_view')
     
     def __init__(
         self, parent,
@@ -80,27 +78,13 @@ class CameraCard(ctk.CTkFrame):
         )
         face_sw.pack(side="right", padx=5) # Right aligned
         
-        # Behavior Switch
-        beh_var = StringVar(value="on")
-        self.switches['behavior'] = beh_var
-        
-        beh_sw = ctk.CTkSwitch(
-            sw_frame, text="Hành vi", variable=beh_var,
-            onvalue="on", offvalue="off",
-            width=80, height=20, font=Fonts.TINY,
-            command=lambda: self.toggle_feature('behavior')
-        )
-        beh_sw.pack(side="right", padx=5) # Right aligned
-        
         # Sync initial state
         if self.camera:
             # Read from camera logic (Global + Override)
             from config import settings
             f_val = self.camera.face_enabled if self.camera.face_enabled is not None else settings.get('detection.face_recognition_enabled', True)
-            b_val = self.camera.behavior_enabled if self.camera.behavior_enabled is not None else settings.get('behavior.enabled', True)
             
             face_var.set("on" if f_val else "off")
-            beh_var.set("on" if b_val else "off")
 
         
         # Stats row
@@ -153,25 +137,21 @@ class CameraCard(ctk.CTkFrame):
         self.labels['progress'] = ctk.CTkProgressBar(self, height=4, progress_color=Colors.SUCCESS)
         self.labels['progress'].pack(fill="x", padx=Sizes.MD, pady=(0, Sizes.SM))
     
+    # Bật/tắt tính năng nhận diện khuôn mặt
     def toggle_feature(self, feature: str):
-        """Toggle Face or Behavior features"""
         if not self.camera:
             return
             
         # Get current state
         face_on = self.switches['face'].get() == "on"
-        beh_on = self.switches['behavior'].get() == "on"
         
-        # Update specific feature
+        # Update feature
         if feature == 'face':
             self.camera.face_enabled = face_on
             log_activity(f"Face Recognition {'enabled' if face_on else 'disabled'} for {self.source}", "info")
-        elif feature == 'behavior':
-            self.camera.behavior_enabled = beh_on
-            log_activity(f"Behavior Analysis {'enabled' if beh_on else 'disabled'} for {self.source}", "info")
             
         # [LOGIC] Master Detection Control
-        should_detect = face_on or beh_on
+        should_detect = face_on
         current_detect = self.state.is_detection_enabled(self.source)
         
         if should_detect and not current_detect:
@@ -193,8 +173,8 @@ class CameraCard(ctk.CTkFrame):
             self.camera.force_reconnect()
             log_activity(f"Reconnecting Camera {self.source}", "info")
     
+    # Cập nhật hiển thị trạng thái
     def update_status(self):
-        """Update status display"""
         if not self.camera:
             return
         
@@ -227,10 +207,9 @@ class CameraCard(ctk.CTkFrame):
             )
 
 
+# Danh sách camera với các điều khiển
 class CameraList(ctk.CTkFrame):
-    """Camera list with controls"""
     
-    __slots__ = ('camera_manager', 'state', 'on_view', 'on_add', 'cards', 'scroll')
     
     def __init__(
         self, parent,
@@ -279,12 +258,12 @@ class CameraList(ctk.CTkFrame):
                 card.pack(fill="x", padx=Sizes.SM, pady=Sizes.XS)
                 self.cards[source] = card
     
+    # Bắt đầu vòng lặp theo dõi trạng thái
     def start_monitor(self):
-        """Start status monitoring loop"""
         self.update_status()
     
+    # Cập nhật trạng thái tất cả camera
     def update_status(self):
-        """Update all camera statuses"""
         try:
             for card in self.cards.values():
                 card.update_status()
@@ -293,8 +272,8 @@ class CameraList(ctk.CTkFrame):
         
         self.after(2000, self.update_status)
     
+    # Thêm thẻ camera mới
     def add_camera(self, source: str, camera):
-        """Add new camera card"""
         if source not in self.cards:
             card = CameraCard(
                 self.scroll, source, camera, self.state,

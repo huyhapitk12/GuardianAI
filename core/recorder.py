@@ -1,106 +1,112 @@
-"""Video recording"""
-
-from __future__ import annotations
+# Ghi video
 import cv2
 import time
 import uuid
 import threading
 import numpy as np
 from pathlib import Path
-from typing import Any, Dict, Optional
 
 from config import settings
 from utils import security
 
 
+# Ghi video
 class Recorder:
-    """Video recorder with encryption"""
-    
-    __slots__ = ('lock', 'active_recording', 'out_dir', 'fps', 'fourcc')
     
     def __init__(self):
         self.lock = threading.Lock()
-        self.active_recording: Optional[Dict[str, Any]] = None
+        self.dang_ghi = None
         self.out_dir = settings.paths.tmp_dir
         self.fps = settings.recorder.fps
+        
         self.fourcc = cv2.VideoWriter.fourcc(*settings.recorder.fourcc)
-    
-    @property
-    def current(self) -> Optional[Dict]:
-        with self.lock:
-            return self.active_recording
-    
-    def start(self, source_id: str, reason: str = "alert", 
-              duration: int = None, wait_for_user: bool = False) -> Optional[Dict]:
-        """Start recording"""
+        print("khoi tao recorder xong")
+
+
+    # Bắt đầu ghi video
+    def start(self, source_id, reason="alert", duration=None, wait_for_user=False):
+        print("bat dau ghi video...")
+        print(source_id)
+        
         duration = duration or settings.recorder.duration
         
+        
         with self.lock:
-            if self.active_recording is not None:
+            if self.dang_ghi is not None:
+                print("dang ghi roi bo qua")
                 return None
             
+            # Tạo tên file
             filename = f"rec_{reason}_{int(time.time())}_{uuid.uuid4().hex[:8]}.mp4"
             path = self.out_dir / filename
             
-            self.active_recording = {
+            print("file name:", filename)
+
+            self.dang_ghi = {
                 'path': path,
                 'writer': None,
                 'end_time': time.time() + duration,
                 'source_id': source_id,
                 'reason': reason,
-                'alert_ids': [],
+                'alert_ids': [], # Danh sách alert
                 'wait_for_user': wait_for_user,
             }
             
-            return self.active_recording
+            return self.dang_ghi
     
-    def write(self, frame: np.ndarray) -> bool:
-        """Write frame"""
+    # Ghi frame vào file
+    def write(self, frame):
         with self.lock:
-            if self.active_recording is None:
+            if self.dang_ghi is None:
                 return False
             
-            # Initialize writer on first frame
-            if self.active_recording['writer'] is None:
+            # Init writer nếu chưa có
+            if self.dang_ghi['writer'] is None:
+                print("tao writer moi")
                 h, w = frame.shape[:2]
                 writer = cv2.VideoWriter(
-                    str(self.active_recording['path']),
+                    str(self.dang_ghi['path']),
                     self.fourcc,
                     self.fps,
                     (w, h)
                 )
                 if not writer.isOpened():
-                    self.active_recording = None
+                    print("loi khong mo duoc file video")
+                    self.dang_ghi = None
                     return False
-                self.active_recording['writer'] = writer
+                self.dang_ghi['writer'] = writer
             
-            self.active_recording['writer'].write(frame)
+            self.dang_ghi['writer'].write(frame)
             return True
-    
-    def check_finalize(self) -> Optional[Dict]:
-        """Check if recording should end"""
+
+    # Check xem xong chưa để lưu
+    def check_finalize(self):
         with self.lock:
-            if self.active_recording is None:
+            if self.dang_ghi is None:
                 return None
             
-            if time.time() < self.active_recording['end_time']:
+            
+            if time.time() < self.dang_ghi['end_time']:
                 return None
             
-            if self.active_recording.get('wait_for_user'):
+            if self.dang_ghi.get('wait_for_user'):
+                # print("doi user...")
                 return None
             
+            print("xong video")
             return self.finalize()
     
-    def finalize(self) -> Dict:
-        """Finalize recording (must hold lock)"""
-        rec = self.active_recording
-        self.active_recording = None
+    # Lưu và mã hóa
+    def finalize(self):
+        rec = self.dang_ghi
+        self.dang_ghi = None
         
         if rec['writer']:
             rec['writer'].release()
         
-        # Encrypt file
+        # Mã hóa file
         if rec['path'].exists():
+            print("ma hoa file...")
             security.encrypt_file(rec['path'])
         
         return {
@@ -108,37 +114,42 @@ class Recorder:
             'source_id': rec['source_id'],
             'alert_ids': rec['alert_ids'],
         }
-    
+
+
+    # Dừng ghi
     def stop(self):
-        """Stop recording"""
+        print("stop ghi")
         with self.lock:
-            if self.active_recording:
-                self.active_recording['end_time'] = time.time()
-                self.active_recording['wait_for_user'] = False
+            if self.dang_ghi:
+                self.dang_ghi['end_time'] = time.time()
+                self.dang_ghi['wait_for_user'] = False
     
-    def discard(self) -> bool:
-        """Discard current recording"""
+    # Hủy ghi
+    def discard(self):
+        print("huy bo video")
         with self.lock:
-            if self.active_recording is None:
+            if self.dang_ghi is None:
                 return False
             
-            if self.active_recording['writer']:
-                self.active_recording['writer'].release()
+            if self.dang_ghi['writer']:
+                self.dang_ghi['writer'].release()
             
-            if self.active_recording['path'].exists():
-                self.active_recording['path'].unlink()
+            if self.dang_ghi['path'].exists():
+                self.dang_ghi['path'].unlink()
             
-            self.active_recording = None
+            self.dang_ghi = None
             return True
     
-    def extend(self, seconds: float):
-        """Extend recording duration"""
+    # Gia hạn thời gian ghi
+    def extend(self, seconds):
+        print(f"gia han them {seconds}s")
         with self.lock:
-            if self.active_recording:
-                self.active_recording['end_time'] += seconds
+            if self.dang_ghi:
+                self.dang_ghi['end_time'] += seconds
     
+    # Chờ user phản hồi
     def resolve_user_wait(self):
-        """Allow finalization after user response"""
+        print("user da phan hoi")
         with self.lock:
-            if self.active_recording:
-                self.active_recording['wait_for_user'] = False
+            if self.dang_ghi:
+                self.dang_ghi['wait_for_user'] = False

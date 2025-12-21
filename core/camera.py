@@ -5,7 +5,6 @@
 # Module này xử lý video từ camera và chạy các bộ phát hiện:
 # - Phát hiện người + nhận diện khuôn mặt
 # - Phát hiện cháy/khói
-# - Phân tích hành vi bất thường
 # =============================================================================
 
 import cv2
@@ -17,7 +16,7 @@ import numpy as np
 from collections import deque
 
 from config import settings, AlertType
-from core.detection import PersonTracker, FireFilter, BehaviorAnalyzer, FireTracker
+from core.detection import PersonTracker, FireFilter, FireTracker, FallDetector
 from core.motion_detector import MotionDetector
 
 
@@ -26,15 +25,13 @@ from core.motion_detector import MotionDetector
 # =============================================================================
 class Camera:
     
-    def __init__(self, source, person_alert_callback=None, fire_alert_callback=None, shared_model=None):
-        """
-        Khởi tạo camera
-        
-        source: URL camera, đường dẫn video, hoặc số (webcam ID)
-        person_alert_callback: Callback khi phát hiện người
-        fire_alert_callback: Callback khi phát hiện cháy
-        shared_model: Model YOLO dùng chung (tiết kiệm RAM)
-        """
+    # Khởi tạo camera
+    # source: URL camera, đường dẫn video, hoặc số (webcam ID)
+    # person_alert_callback: Callback khi phát hiện người
+    # fire_alert_callback: Callback khi phát hiện cháy
+    # fall_alert_callback: Callback khi phát hiện té ngã
+    # shared_model: Model YOLO dùng chung (tiết kiệm RAM)
+    def __init__(self, source, person_alert_callback=None, fire_alert_callback=None, fall_alert_callback=None, shared_model=None):
         # Nguồn video
         self.source = source
         self.source_id = str(source)
@@ -60,6 +57,7 @@ class Camera:
         # ----- Phát hiện chế độ IR (hồng ngoại/ban đêm) -----
         self.is_ir = False
         self.ir_history = deque(maxlen=30)  # Lưu lịch sử 30 frame
+        self.ir_manual_override = None  # None = auto, True/False = manual
         
         # ----- Phát hiện cháy -----
         debug_fire = settings.get('camera.debug_fire_detection', False)
@@ -71,12 +69,6 @@ class Camera:
         # ----- Phát hiện người -----
         self.person_tracker = PersonTracker(shared_model=shared_model)
         
-        # ----- Phân tích hành vi -----
-        self.behavior_analyzer = None
-        self.last_pose = None           # Lưu pose cuối cùng
-        self.last_pose_time = 0         # Thời điểm pose cuối
-        self.pose_hold_time = 0.3       # Giữ pose trong 0.3 giây để tránh nhấp nháy
-        
         # ----- Phát hiện chuyển động -----
         # Dùng để tiết kiệm CPU: không có chuyển động = không cần chạy AI
         self.motion_detector = MotionDetector(
@@ -87,11 +79,16 @@ class Camera:
         # ----- Callback functions -----
         self.person_alert_callback = person_alert_callback
         self.fire_alert_callback = fire_alert_callback
+        self.fall_alert_callback = fall_alert_callback
+        
+        # ----- Phát hiện té ngã -----
+        self.fall_detector = None
+        self.is_fall_detected = False
+        self.fall_prob = 0.0
         
         # ----- Queue cho xử lý đa luồng -----
         # maxsize=2: Tối đa 2 frame trong queue, tránh tồn đọng
         self.fire_queue = queue.Queue(maxsize=2)
-        self.behavior_queue = queue.Queue(maxsize=2)
         self.result_queue = queue.Queue(maxsize=16)
         
         # Trạng thái detection
@@ -99,13 +96,12 @@ class Camera:
         
         # Override per-camera settings (None = dùng global settings)
         self.face_enabled = None
-        self.behavior_enabled = None
         
         # Kết nối camera
         self.init_capture()
     
+    # Kết nối với camera
     def init_capture(self):
-        """Kết nối với camera"""
         try:
             # Nếu là webcam (số), thử nhiều backend
             if isinstance(self.source, int):
@@ -126,39 +122,42 @@ class Camera:
         except Exception as e:
             print(f"❌ Camera {self.source_id} kết nối thất bại: {e}")
     
+    # Lấy danh sách backend phù hợp với hệ điều hành
     def get_backends(self):
-        """Lấy danh sách backend phù hợp với hệ điều hành"""
         if platform.system() == 'Windows':
             return [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]
         elif platform.system() == 'Linux':
             return [cv2.CAP_V4L2, cv2.CAP_ANY]
         return [cv2.CAP_ANY]
     
+    # Đọc frame đã xử lý (có vẽ box, label)
     def read(self):
-        """Đọc frame đã xử lý (có vẽ box, label)"""
         with self.frame_lock:
             if self.last_frame is not None:
                 return True, self.last_frame.copy()
             return False, None
     
+    # Đọc frame gốc (không xử lý)
     def read_raw(self):
-        """Đọc frame gốc (không xử lý)"""
         with self.frame_lock:
             if self.raw_frame is not None:
                 return True, self.raw_frame.copy()
             return False, None
     
-    def start_workers(self, fire_detector, face_detector, behavior_analyzer=None):
-        """
-        Khởi động các worker xử lý
-        Worker = Thread chạy nền để xử lý từng tác vụ
-        """
+    # Khởi động các worker xử lý
+    # Worker = Thread chạy nền để xử lý từng tác vụ
+    def start_workers(self, fire_detector, face_detector):
         # Gắn face detector vào person tracker
         self.person_tracker.set_face_detector(face_detector)
         self.person_tracker.initialize()
         
-        # Gắn behavior analyzer
-        self.behavior_analyzer = behavior_analyzer
+        # Khởi tạo Fall Detector
+        try:
+            self.fall_detector = FallDetector()
+            print(f"✅ Camera {self.source_id}: Fall Detector đã sẵn sàng")
+        except Exception as e:
+            print(f"⚠️ Camera {self.source_id}: Không thể khởi tạo Fall Detector: {e}")
+            self.fall_detector = None
         
         # Thread phát hiện cháy
         threading.Thread(
@@ -166,20 +165,10 @@ class Camera:
             args=(fire_detector,),
             daemon=True
         ).start()
-        
-        # Thread phân tích hành vi
-        if self.behavior_analyzer:
-            threading.Thread(
-                target=self.behavior_worker,
-                daemon=True
-            ).start()
-            print(f"✅ Behavior worker đã chạy cho camera {self.source_id}")
     
+    # Worker phát hiện cháy
+    # Chạy trong thread riêng, lấy frame từ queue và phát hiện
     def fire_worker(self, detector):
-        """
-        Worker phát hiện cháy
-        Chạy trong thread riêng, lấy frame từ queue và phát hiện
-        """
         while not self.quit:
             try:
                 frame = self.fire_queue.get(timeout=1.0)
@@ -189,43 +178,12 @@ class Camera:
             except queue.Empty:
                 continue
     
-    def behavior_worker(self):
-        """
-        Worker phân tích hành vi
-        Phát hiện hành vi bất thường như: ngã, đánh nhau,...
-        """
-        skip_counter = 0
-        skip_n = settings.get('behavior.process_every_n_frames', 3)
-        
-        while not self.quit:
-            try:
-                frame = self.behavior_queue.get(timeout=1.0)
-                
-                # Bỏ qua một số frame để giảm tải
-                skip_counter += 1
-                if skip_counter % skip_n != 0:
-                    continue
-                
-                # Phân tích
-                result = self.behavior_analyzer.process_frame(frame)
-                
-                # Kiểm tra có bất thường không
-                if result.is_anomaly and self.behavior_analyzer.should_alert():
-                    self.result_queue.put(('behavior', result, frame.copy()))
-                    
-            except queue.Empty:
-                continue
-            except Exception as e:
-                print(f"Lỗi behavior worker: {e}")
-    
     # =========================================================================
     # VÒNG LẶP XỬ LÝ CHÍNH
     # =========================================================================
+    # Vòng lặp chính xử lý video
+    # Chạy liên tục cho đến khi self.quit = True
     def process_loop(self, state_manager):
-        """
-        Vòng lặp chính xử lý video
-        Chạy liên tục cho đến khi self.quit = True
-        """
         # Tính interval giữa các frame dựa trên FPS mong muốn
         interval = 1.0 / settings.camera.target_fps
         last_time = 0
@@ -271,13 +229,20 @@ class Camera:
             
             # ----- Resize frame để xử lý -----
             # Frame nhỏ hơn = xử lý nhanh hơn
-            proc_size = settings.camera.process_size
-            small = cv2.resize(frame, tuple(proc_size))
-            
-            # Tính tỉ lệ scale để chuyển đổi tọa độ
+            # [LOGIC] Giữ nguyên tỉ lệ (aspect ratio) để không bị méo
+            proc_w, proc_h = settings.camera.process_size
             h, w = frame.shape[:2]
-            scale_x = w / proc_size[0]
-            scale_y = h / proc_size[1]
+            
+            # Tính scale factor để fit vào process_size
+            scale = min(proc_w / w, proc_h / h)
+            new_w = int(w * scale)
+            new_h = int(h * scale)
+            
+            small = cv2.resize(frame, (new_w, new_h))
+            
+            # Tính tỉ lệ scale để chuyển đổi tọa độ (từ nhỏ -> lớn)
+            scale_x = w / new_w
+            scale_y = h / new_h
             
             # ----- Kiểm tra detection có bật không -----
             detection_enabled = state_manager.is_detection_enabled(self.source_id)
@@ -292,16 +257,12 @@ class Camera:
                 self.ai_active_until = now + 5.0
             
             # 2. Chỉ chạy AI khi cần
-            # ----- Kiểm tra 2 toggle chức năng -----
+            # ----- Kiểm tra toggle chức năng -----
             # Ưu tiên setting riêng của camera, nếu None thì dùng Global
             face_enabled = self.face_enabled if self.face_enabled is not None else settings.get('detection.face_recognition_enabled', True)
-            behavior_enabled = self.behavior_enabled if self.behavior_enabled is not None else settings.get('behavior.enabled', True)
             
-            # [LOGIC] Nếu cả 2 đều tắt -> Tắt luôn nhận diện người
-            person_detection_allowed = face_enabled or behavior_enabled
-
-            # 2. Chỉ chạy AI khi cần
-            should_run_ai = detection_enabled and person_detection_allowed and (
+            # Chỉ chạy AI khi face detection được bật
+            should_run_ai = detection_enabled and face_enabled and (
                 now < self.ai_active_until or self.frame_idx < 30
             )
             
@@ -311,24 +272,21 @@ class Camera:
                 # 3. Nếu có người, giữ AI hoạt động (tránh mất track khi đứng yên)
                 if self.person_tracker.has_tracks():
                     self.ai_active_until = now + 5.0
+                    
+                    # 4. Phát hiện té ngã (chỉ khi có người)
+                    self.process_fall(frame, scale_x, scale_y)
             
             # ----- Phát hiện cháy (luôn chạy vì quan trọng) -----
             if not self.fire_queue.full():
                 self.fire_queue.put(small.copy())
                 self.fire_queue.put(small.copy())
             
-            # ----- Phân tích hành vi -----
-            # [LOGIC] Chỉ chạy AI hành vi khi ĐÃ phát hiện người VÀ behavior được bật
-            has_people = self.person_tracker.has_tracks()
-            if detection_enabled and behavior_enabled and self.behavior_analyzer and not self.behavior_queue.full() and has_people:
-                self.behavior_queue.put(small.copy())
-            
             # ----- Xử lý kết quả từ các worker -----
             self.process_results(frame, scale_x, scale_y)
             
             # ----- Cập nhật frame hiển thị -----
             display = frame.copy()
-            self.draw_overlays(display, detection_enabled)
+            self.draw_overlays(display, detection_enabled, scale_x, scale_y)
             
             with self.frame_lock:
                 self.last_frame = display
@@ -337,11 +295,11 @@ class Camera:
         # Dọn dẹp khi thoát
         self.release()
     
+    # Xử lý phát hiện và tracking người
     def process_persons(self, small, full, scale_x, scale_y, face_enabled=True):
-        """Xử lý phát hiện và tracking người"""
         try:
             # Lấy ngưỡng tin cậy
-            threshold = settings.get('detection.person_confidence', 0.5)
+            threshold = settings.get('detection.person_confidence_threshold', 0.5)
             if self.is_ir:
                 # IR mode: ngưỡng thấp hơn vì ảnh khó hơn
                 threshold = settings.get('camera.infrared.person_detection_threshold', 0.45)
@@ -359,14 +317,42 @@ class Camera:
             for tid, alert_type, metadata in self.person_tracker.check_alerts():
                 if self.person_alert_callback:
                     alert_frame = full.copy()
-                    self.draw_overlays(alert_frame, True)
+                    self.draw_overlays(alert_frame, True, scale_x, scale_y)
                     self.person_alert_callback(self.source_id, alert_frame, alert_type, metadata)
                     
         except Exception as e:
             print(f"Lỗi xử lý người: {e}")
     
+    # Xử lý phát hiện té ngã
+    # Chỉ chạy khi đã phát hiện được người
+    def process_fall(self, frame, scale_x, scale_y):
+        if not self.fall_detector:
+            return
+        
+        try:
+            # Cập nhật fall detector với frame hiện tại
+            self.fall_detector.update(frame)
+            
+            # Kiểm tra trạng thái té ngã
+            is_fall, prob = self.fall_detector.check_fall()
+            self.is_fall_detected = is_fall
+            self.fall_prob = prob
+            
+            # Gửi cảnh báo nếu phát hiện té ngã
+            if is_fall and self.fall_alert_callback:
+                alert_frame = frame.copy()
+                self.draw_overlays(alert_frame, True, scale_x, scale_y)
+                self.fall_alert_callback(self.source_id, alert_frame, AlertType.FALL)
+                print(f"🚨 FALL DETECTED - Camera {self.source_id} (prob={prob:.2f})")
+                
+                # Reset để không gửi liên tục
+                self.fall_detector.reset()
+                
+        except Exception as e:
+            print(f"Lỗi phát hiện té ngã: {e}")
+    
+    # Xử lý kết quả từ các worker queue
     def process_results(self, frame, scale_x, scale_y):
-        """Xử lý kết quả từ các worker queue"""
         self.fire_boxes = []
         
         try:
@@ -377,22 +363,15 @@ class Camera:
                 if result_type == 'fire':
                     detections = result[1]
                     self.handle_fire_detections(detections, frame, scale_x, scale_y)
-                
-                elif result_type == 'behavior':
-                    behavior_result = result[1]
-                    alert_frame = result[2]
-                    self.handle_behavior_alert(behavior_result, alert_frame)
                     
         except queue.Empty:
             pass
     
+    # Xử lý phát hiện cháy với hệ thống Red Alert Mode
     def handle_fire_detections(self, detections, frame, scale_x, scale_y):
-        """
-        Xử lý phát hiện cháy với hệ thống Red Alert Mode
         
-        Yellow Alert: Nghi ngờ có cháy (cần xác nhận thêm)
-        Red Alert: Chắc chắn có cháy (nguy hiểm!)
-        """
+        # Yellow Alert: Nghi ngờ có cháy (cần xác nhận thêm)
+        # Red Alert: Chắc chắn có cháy (nguy hiểm!)
         validated_dets = []
         
         for det in detections:
@@ -420,7 +399,7 @@ class Camera:
         # Gửi cảnh báo nếu cần
         if should_alert and self.fire_alert_callback:
             alert_frame = frame.copy()
-            self.draw_overlays(alert_frame, True)
+            self.draw_overlays(alert_frame, True, scale_x, scale_y)
             
             # Red = CRITICAL, Yellow = WARNING
             alert_type = AlertType.FIRE_CRITICAL if is_red else AlertType.FIRE_WARNING
@@ -432,43 +411,32 @@ class Camera:
             
             self.fire_alert_callback(self.source_id, alert_frame, alert_type)
     
-    def handle_behavior_alert(self, result, frame):
-        """Xử lý cảnh báo hành vi bất thường"""
-        if self.person_alert_callback:
-            # Vẽ visualization
-            if self.behavior_analyzer:
-                self.behavior_analyzer.draw_on_frame(frame, result)
-            
-            metadata = {
-                'score': result.score,
-                'timestamp': result.timestamp
-            }
-            self.person_alert_callback(
-                self.source_id,
-                frame,
-                AlertType.ANOMALOUS_BEHAVIOR,
-                metadata
-            )
-    
-    def draw_overlays(self, frame, detection_enabled):
-        """Vẽ các thông tin lên frame"""
+    # Vẽ các thông tin lên frame
+    def draw_overlays(self, frame, detection_enabled, scale_x=1.0, scale_y=1.0):
         
         # ----- Vẽ box cháy (đỏ) -----
         for box in self.fire_boxes:
             cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 0, 255), 3)
+            
+            # Label chính
             cv2.putText(frame, "🔥 FIRE", (box[0], box[1] - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+            
+            # Hiển thị độ phát triển (Growth)
+            growth = self.fire_tracker.current_growth_rate
+            if growth > 1.05: # Chỉ hiện khi tăng > 5%
+                text = f"Growth: +{(growth-1)*100:.0f}%"
+                cv2.putText(frame, text, (box[0], box[1] - 25),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
         
         # ----- Vẽ box người -----
         if detection_enabled:
-            self.draw_persons_with_behavior(frame)
+            self.draw_persons(frame, scale_x, scale_y)
         
         # ----- Vẽ box chuyển động (Cyan) -----
         if hasattr(self.motion_detector, 'motion_boxes'):
-            dh, dw = frame.shape[:2]
-            ph, pw = settings.camera.process_size[1], settings.camera.process_size[0]
-            sx = dw / pw
-            sy = dh / ph
+            sx = scale_x
+            sy = scale_y
             
             for (mx1, my1, mx2, my2) in self.motion_detector.motion_boxes:
                 final_x1 = int(mx1 * sx)
@@ -479,39 +447,44 @@ class Camera:
                 cv2.rectangle(frame, (final_x1, final_y1), (final_x2, final_y2), (255, 255, 0), 1)
                 cv2.putText(frame, "Motion", (final_x1, final_y1 - 2), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
-        
+
         # ----- Hiển thị chế độ IR -----
         if self.is_ir:
             cv2.putText(frame, "IR MODE", (10, frame.shape[0] - 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # ----- Hiển thị phát hiện té ngã -----
+        if self.is_fall_detected:
+            # Vẽ chữ FALL DETECTED lớn ở giữa màn hình
+            h, w = frame.shape[:2]
+            text = "FALL DETECTED!"
+            font = cv2.FONT_HERSHEY_SIMPLEX
+            font_scale = 1.5
+            thickness = 3
+            (text_w, text_h), _ = cv2.getTextSize(text, font, font_scale, thickness)
+            
+            x = (w - text_w) // 2
+            y = 60
+            
+            # Vẽ nền đỏ
+            cv2.rectangle(frame, (x - 10, y - text_h - 10), (x + text_w + 10, y + 10), (0, 0, 200), -1)
+            cv2.putText(frame, text, (x, y), font, font_scale, (255, 255, 255), thickness)
+            
+            # Hiển thị xác suất
+            prob_text = f"Prob: {self.fall_prob:.2f}"
+            cv2.putText(frame, prob_text, (x, y + 35), font, 0.7, (0, 0, 255), 2)
     
-    def draw_persons_with_behavior(self, frame):
-        """Vẽ box người kèm trạng thái hành vi"""
+    # Vẽ box người
+    def draw_persons(self, frame, scale_x=1.0, scale_y=1.0):
         tracks = self.person_tracker.tracks
-        
-        # Lấy behavior score
-        behavior_score = 0.0
-        behavior_threshold = 0.5
-        
-        if self.behavior_analyzer:
-            behavior_score = self.behavior_analyzer.current_score
-            behavior_threshold = self.behavior_analyzer.threshold
-        
-        is_anomaly = behavior_score >= behavior_threshold
         
         for tid, track in tracks.items():
             x1, y1, x2, y2 = map(int, track.bbox)
             
             # Xác định tên hiển thị
-            # Determine enabled features
             face_enabled = self.face_enabled if self.face_enabled is not None else settings.get('detection.face_recognition_enabled', True)
-            behavior_enabled = self.behavior_enabled if self.behavior_enabled is not None else settings.get('behavior.enabled', True)
             
-            # Reset anomaly if behavior disabled
-            if not behavior_enabled:
-                is_anomaly = False
-            
-            # Determine display name
+            # Xác định tên và trạng thái
             if face_enabled:
                 name = track.confirmed_name or track.name
                 is_stranger = (name == "Stranger")
@@ -520,24 +493,16 @@ class Camera:
                 is_stranger = False
             
             # ===== XÁC ĐỊNH MÀU BOX =====
-            if is_anomaly:
-                color = (0, 0, 255)      # Đỏ - Bất thường
-                status = "BAT THUONG"
-            elif is_stranger:
+            if is_stranger:
                 color = (0, 165, 255)    # Cam - Người lạ
-                status = "Chua xac dinh"
             else:
                 color = (0, 255, 0)      # Xanh lá - Người quen
-                status = "Binh thuong"
             
             # ===== VẼ BOX =====
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
             # ===== TẠO LABEL =====
-            if self.behavior_analyzer and self.behavior_analyzer.loaded:
-                label = f"ID:{tid} {name} | {status} ({behavior_score:.2f})"
-            else:
-                label = f"ID:{tid} {name}"
+            label = f"ID:{tid} {name}"
             
             # ===== VẼ LABEL =====
             font = cv2.FONT_HERSHEY_SIMPLEX
@@ -551,116 +516,16 @@ class Camera:
             
             cv2.rectangle(frame, (x1, label_y1), (label_x2, label_y2), color, -1)
             cv2.putText(frame, label, (x1 + 4, label_y2 - 4), font, font_scale, (255, 255, 255), thickness)
+    
+    # Phát hiện chế độ IR (hồng ngoại/ban đêm)
+    def detect_ir(self, frame):
         
-        # ===== VẼ SKELETON =====
-        # Lấy pose hiện tại từ analyzer
-        current_pose = self.behavior_analyzer.current_pose if self.behavior_analyzer else None
-        now = time.time()
-        
-        # Cập nhật last_pose nếu có pose mới
-        if current_pose and current_pose.is_valid:
-            self.last_pose = current_pose
-            self.last_pose_time = now
-        
-        # Vẽ skeleton nếu có pose và chưa quá thời gian hold
-        if self.last_pose and self.last_pose.bbox and (now - self.last_pose_time < self.pose_hold_time):
-            # [LOGIC] Check if behavior is enabled
-            behavior_enabled = self.behavior_enabled if self.behavior_enabled is not None else settings.get('behavior.enabled', True)
-            if not behavior_enabled:
-                self.last_pose = None
-                return
-
-            # [LOGIC MỚI] Chỉ vẽ nếu skeleton nằm trong vùng của người đã phát hiện
-            # Điều này giúp đồng bộ giữa Person Detection và Behavior Analysis
-
-            should_draw = False
-            
-            # 1. Tính toán tọa độ skeleton trên frame hiển thị
-            h, w = frame.shape[:2]
-            proc_w, proc_h = settings.camera.process_size
-            scale_x = w / proc_w
-            scale_y = h / proc_h
-            
-            px1, py1, px2, py2 = self.last_pose.bbox
-            # Box của skeleton (đã scale)
-            sk_x1 = px1 * scale_x
-            sk_y1 = py1 * scale_y
-            sk_x2 = px2 * scale_x
-            sk_y2 = py2 * scale_y
-            
-            # Tâm của skeleton
-            sk_cx = (sk_x1 + sk_x2) / 2
-            sk_cy = (sk_y1 + sk_y2) / 2
-            
-            # 2. Kiểm tra có trùng với người nào không
-            for tid, track in tracks.items():
-                tx1, ty1, tx2, ty2 = track.bbox
-                
-                # Kiểm tra tâm skeleton nằm trong box người
-                # Mở rộng box người một chút (margin) để bắt dính tốt hơn
-                margin = 50 
-                if (tx1 - margin <= sk_cx <= tx2 + margin) and \
-                   (ty1 - margin <= sk_cy <= ty2 + margin):
-                    should_draw = True
-                    break
-            
-            if should_draw:
-                self.draw_skeleton_only(frame, is_anomaly, self.last_pose)
-
-    def draw_skeleton_only(self, frame, is_anomaly, pose):
-        """
-        Vẽ skeleton (bộ xương) của người
-        
-        pose: PoseResult chứa keypoints đã ở tọa độ process_size
-        """
-        if not pose or not pose.is_valid:
+        # Camera IR chỉ có đen trắng, không có màu.
+        # Khi camera chuyển sang ban đêm, cần điều chỉnh các ngưỡng.
+        # Nếu user đã toggle thủ công, không auto detect
+        if self.ir_manual_override is not None:
             return
         
-        # Scale keypoints từ process_size về kích thước frame hiển thị
-        h, w = frame.shape[:2]
-        proc_w, proc_h = settings.camera.process_size
-        
-        scale_x = w / proc_w
-        scale_y = h / proc_h
-        
-        # Copy và scale keypoints
-        scaled_kps = pose.keypoints.copy()
-        scaled_kps[:, 0] *= scale_x
-        scaled_kps[:, 1] *= scale_y
-        
-        # Màu theo trạng thái
-        color = (0, 0, 255) if is_anomaly else (0, 255, 0)
-        
-        # Các đường nối skeleton (theo format COCO)
-        SKELETON = [
-            (0, 1), (0, 2), (1, 3), (2, 4),      # Đầu
-            (5, 6), (5, 7), (7, 9), (6, 8), (8, 10),  # Tay
-            (5, 11), (6, 12), (11, 12),          # Thân
-            (11, 13), (13, 15), (12, 14), (14, 16)   # Chân
-        ]
-        
-        # Vẽ xương
-        for i, j in SKELETON:
-            if i < len(pose.confidence) and j < len(pose.confidence):
-                if pose.confidence[i] > 0.3 and pose.confidence[j] > 0.3:
-                    pt1 = tuple(scaled_kps[i].astype(int))
-                    pt2 = tuple(scaled_kps[j].astype(int))
-                    cv2.line(frame, pt1, pt2, color, 2)
-        
-        # Vẽ khớp
-        for pt, conf in zip(scaled_kps, pose.confidence):
-            if conf > 0.3:
-                center = tuple(pt.astype(int))
-                cv2.circle(frame, center, 5, color, -1)
-                cv2.circle(frame, center, 5, (255, 255, 255), 1)
-    
-    def detect_ir(self, frame):
-        """
-        Phát hiện chế độ IR (hồng ngoại/ban đêm)
-        
-        Camera IR chỉ có đen trắng, không có màu.
-        Khi camera chuyển sang ban đêm, cần điều chỉnh các ngưỡng.
-        """
         # Lấy mẫu (sample) để tính nhanh
         sample = frame[::10, ::10]
         
@@ -693,8 +558,8 @@ class Camera:
                 if new_mode:
                     print(f"   → Tắt nhận diện khuôn mặt (ảnh đen trắng)")
     
+    # Áp dụng bộ lọc màu theo chế độ
     def apply_color_filter(self, frame):
-        """Áp dụng bộ lọc màu theo chế độ"""
         if self.is_ir:
             # Chuyển sang grayscale để xử lý thống nhất
             gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
@@ -703,8 +568,8 @@ class Camera:
         # Trả về frame gốc
         return frame
     
+    # Thử kết nối lại camera
     def reconnect(self):
-        """Thử kết nối lại camera"""
         self.reconnect_attempts += 1
         
         max_attempts = settings.get('camera.max_reconnect_attempts', 10)
@@ -726,50 +591,58 @@ class Camera:
         
         return False
     
+    # Kiểm tra camera còn hoạt động không
     def check_health(self):
-        """Kiểm tra camera còn hoạt động không"""
         return time.time() - self.last_frame_time < 10
     
+    # Lấy trạng thái kết nối
     def get_connection_status(self):
-        """Lấy trạng thái kết nối"""
         return self.cap is not None and self.cap.isOpened() and self.check_health()
     
+    # Kiểm tra có mối nguy hiểm đang hoạt động không
+    # Dùng để quyết định có kéo dài thời gian ghi video không
+    # 1. Kiểm tra cháy
     def has_active_threat(self):
-        """
-        Kiểm tra có mối nguy hiểm đang hoạt động không
-        Dùng để quyết định có kéo dài thời gian ghi video không
-        """
-        # 1. Kiểm tra cháy
-        if self.fire_tracker.is_red_alert or self.fire_tracker.is_yellow_alert:
+        if self.fire_tracker.get_is_red_alert() or self.fire_tracker.get_is_yellow_alert():
             return True
         
         # 2. Kiểm tra người lạ
         if self.person_tracker.has_active_threats():
             return True
         
-        # 3. Kiểm tra hành vi bất thường
-        if self.behavior_analyzer:
-            if self.behavior_analyzer.current_score >= self.behavior_analyzer.threshold:
-                return True
-        
         return False
     
+    # Lấy trạng thái IR
     def get_infrared_status(self):
-        """Lấy trạng thái IR"""
         return self.is_ir
     
+    # Bật/tắt chế độ IR thủ công (disable auto detect)
+    def set_ir_enhancement(self, enabled):
+        self.ir_manual_override = enabled  # Đánh dấu đang dùng manual
+        self.is_ir = enabled
+        mode = "IR (Ban đêm)" if enabled else "RGB (Ban ngày)"
+        print(f"📷 Camera {self.source_id}: Chuyển sang chế độ {mode} (manual)")
+    
+    # Reset về auto detect IR
+    def reset_ir_auto(self):
+        self.ir_manual_override = None
+        self.ir_history.clear()
+        print(f"📷 Camera {self.source_id}: Reset về auto detect IR")
+    
+    # Bắt buộc kết nối lại
     def force_reconnect(self):
-        """Bắt buộc kết nối lại"""
         self.reconnect_attempts = 0
         self.reconnect()
     
+    # Giải phóng tài nguyên
     def release(self):
-        """Giải phóng tài nguyên"""
         self.quit = True
+        
+        # Giải phóng fall detector
+        if self.fall_detector:
+            self.fall_detector.close()
+            self.fall_detector = None
+        
         if self.cap:
             self.cap.release()
             self.cap = None
-        if self.behavior_analyzer:
-            self.behavior_analyzer.close()
-            self.behavior_analyzer = None
-        print(f"Camera {self.source_id} đã giải phóng")

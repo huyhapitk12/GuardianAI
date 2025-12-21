@@ -3,11 +3,10 @@ import os
 import re
 from enum import Enum
 from pathlib import Path
-from typing import Any, List
 import yaml
-# Remove logging import - using print instead
+
+# Quản lý cấu hình: tải từ file YAML và biến môi trường
 class Settings:
-    """Configuration management: loads from YAML and environment variables"""
     def __init__(self, config_path='config/config.yaml'):
         self.base_dir = Path(__file__).parent.parent
         config_file = self.base_dir / config_path
@@ -20,8 +19,8 @@ class Settings:
         self._process_special_values()
         self._create_dynamic_enums()
 
-    def _resolve_env_vars(self, data: Any) -> Any:
-        """Recursively resolve environment variables in config"""
+    # Đệ quy xử lý biến môi trường trong config
+    def _resolve_env_vars(self, data):
         if isinstance(data, dict):
             return {k: self._resolve_env_vars(v) for k, v in data.items()}
         elif isinstance(data, list):
@@ -33,8 +32,8 @@ class Settings:
                 return os.getenv(var_name, default_val)
         return data
 
+    # Chuyển đường dẫn tương đối thành tuyệt đối
     def _resolve_paths(self):
-        """Convert relative paths to absolute"""
         if 'paths' in self._config:
             for key, value in self._config['paths'].items():
                 path = Path(value)
@@ -44,8 +43,8 @@ class Settings:
             if tmp_dir:
                 tmp_dir.mkdir(exist_ok=True)
 
+    # Xử lý các giá trị đặc biệt (ví dụ: camera.sources)
     def _process_special_values(self):
-        """Process special config values (e.g., camera.sources)"""
         if 'camera' in self._config and 'sources' in self._config['camera']:
             sources_val = self._config['camera']['sources']
             if isinstance(sources_val, str):
@@ -54,12 +53,8 @@ class Settings:
                 # Handle int or other single values
                 self._config['camera']['sources'] = [sources_val]
 
-    def _create_dynamic_enums(self):
-        """Create dynamic Enums (kept in source for clarity)"""
-        pass
-
-    def get_yolo_model_path(self, model_type: str, size: str, format_type: str = None) -> Path:
-        """Get YOLO model path based on type, size, and format"""
+    # Lấy đường dẫn model YOLO dựa trên loại, kích thước và định dạng
+    def get_yolo_model_path(self, model_type, size, format_type=None):
         if format_type is None:
             format_type = self.get('models.yolo_format', 'pytorch')
         size_capitalized = size.capitalize()
@@ -76,8 +71,8 @@ class Settings:
             model_path = base_path / f"{size}.pt"
         return model_path
 
-    def __getattr__(self, name: str) -> Any:
-        """Allow attribute-style access to top-level config keys"""
+    # Cho phép truy cập config kiểu attribute
+    def __getattr__(self, name):
         if name in self._config:
             value = self._config[name]
             if isinstance(value, dict):
@@ -85,8 +80,8 @@ class Settings:
             return value
         raise AttributeError(f"'Settings' object has no attribute '{name}'")
 
-    def get(self, key: str, default: Any = None) -> Any:
-        """Dict-style get method"""
+    # Lấy giá trị kiểu dict
+    def get(self, key, default=None):
         keys = key.split('.')
         value = self._config
         try:
@@ -96,8 +91,8 @@ class Settings:
         except (KeyError, TypeError):
             return default
 
-    def set(self, key: str, value: Any):
-        """Update a setting value by key"""
+    # Cập nhật giá trị setting theo key
+    def set(self, key, value):
         keys = key.split('.')
         current = self._config
         for k in keys[:-1]:
@@ -106,13 +101,13 @@ class Settings:
             current = current[k]
         current[keys[-1]] = value
 
+    # Lưu cấu hình hiện tại xuống file
     def save(self):
-        """Save current configuration to file"""
         data = self._prepare_for_save(self._config)
         save_raw_config(data)
         
+    # Đệ quy chuyển đổi Path object thành chuỗi để lưu
     def _prepare_for_save(self, data):
-        """Recursively convert Path objects to strings and handle other types"""
         if isinstance(data, dict):
             return {k: self._prepare_for_save(v) for k, v in data.items()}
         elif isinstance(data, list):
@@ -125,12 +120,12 @@ class Settings:
                 return str(data)
         return data
 
+# Proxy để truy cập dictionary lồng nhau như attribute
 class _ConfigProxy:
-    """Proxy for accessing nested dictionaries as attributes"""
     def __init__(self, data: dict):
         self._data = data
 
-    def __getattr__(self, name: str) -> Any:
+    def __getattr__(self, name):
         if name in self._data:
             value = self._data[name]
             if isinstance(value, dict):
@@ -138,23 +133,24 @@ class _ConfigProxy:
             return value
         raise AttributeError(f"Configuration section has no attribute '{name}'")
 
-    def __getitem__(self, key: str) -> Any:
+    def __getitem__(self, key):
         return self._data[key]
 
-# --- Enums for type hints ---
+# --- Enum cho type hints ---
 class AlertType(Enum):
     KNOWN_PERSON = "nguoi_quen"
     STRANGER = "nguoi_la"
     FIRE_WARNING = "lua_chay_nghi_ngo"
     FIRE_CRITICAL = "lua_chay_khan_cap"
     ANOMALOUS_BEHAVIOR = "hanh_vi_bat_thuong"
+    FALL = "te_nga"
 
+# Mức độ ưu tiên cảnh báo
 class AlertPriority(Enum):
-    """Alert priority levels for different response urgency"""
-    CRITICAL = 1  # Fire alerts - immediate action required
-    HIGH = 2      # Stranger with anomalous behavior - security threat
-    MEDIUM = 3    # Stranger only - security monitoring
-    LOW = 4       # Known person - informational
+    CRITICAL = 1  # Báo động cháy - cần xử lý ngay lập tức
+    HIGH = 2      # Người lạ có hành vi bất thường - đe dọa an ninh
+    MEDIUM = 3    # Chỉ phát hiện người lạ - giám sát an ninh
+    LOW = 4       # Người quen - thông tin tham khảo
 
 class ActionCode(Enum):
     TOGGLE_ON = "TOGGLE_ON"
@@ -163,13 +159,13 @@ class ActionCode(Enum):
     ALARM_ON = "ALARM_ON"
     ALARM_OFF = "ALARM_OFF"
 
-def _get_config_path() -> Path:
-    """Get config file path"""
+# Lấy đường dẫn file config
+def _get_config_path():
     base_dir = Path(__file__).parent.parent
     return base_dir / 'config/config.yaml'
 
-def load_raw_config() -> dict:
-    """Load raw config file"""
+# Tải file config thô
+def load_raw_config():
     config_path = _get_config_path()
     if not config_path.exists():
         print(f"ERROR: Config not found: {config_path}")
@@ -181,8 +177,8 @@ def load_raw_config() -> dict:
         print(f"ERROR: Error loading config: {e}")
         return {}
 
-def save_raw_config(data: dict) -> bool:
-    """Save config to file"""
+# Lưu config thô
+def save_raw_config(data):
     config_path = _get_config_path()
     try:
         with open(config_path, 'w', encoding='utf-8') as f:
@@ -192,8 +188,8 @@ def save_raw_config(data: dict) -> bool:
         print(f"ERROR: Error saving config: {e}")
         return False
 
-def update_config_value(key_path: str, value: Any) -> bool:
-    """Update config value and save to file"""
+# Cập nhật giá trị config và lưu
+def update_config_value(key_path, value):
     config = load_raw_config()
     if not config:
         return False
@@ -216,8 +212,8 @@ def update_config_value(key_path: str, value: Any) -> bool:
         return True
     return False
 
-def add_camera_source_to_config(new_source) -> tuple[bool, str]:
-    """Add new camera source to config.yaml"""
+# Thêm camera mới vào config
+def add_camera_source_to_config(new_source):
     config = load_raw_config()
     if not config:
         return False, "Could not load config"

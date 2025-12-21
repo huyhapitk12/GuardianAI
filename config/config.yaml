@@ -1,18 +1,16 @@
 ai:
-  api_base: https://generativelanguage.googleapis.com/v1beta/openai/
-  api_key: AIzaSyBvBkXirUSiTAqXNykZjfoHWwdPqZDZYnA
-  enabled: true
+  api_base: 
+  api_key: 
+  enabled: false
   max_history_turns: 5
   max_tokens: 512
-  model: gemini-2.5-flash
+  model: 
   temperature: 0.5
-  use_llm_for_classification: true
+  use_llm_for_classification: false
 alarm:
   fade_in_duration: 2
   max_volume: 5.0
   start_volume: 1.0
-behavior:
-  enabled: true
 camera:
   fire_filter:
     infrared:
@@ -42,22 +40,34 @@ camera:
       saturation_min: 80
       texture_entropy_min: 4.0
   max_reconnect_attempts: 10
+  debug_fire_detection: false
+  infrared:
+    person_detection_threshold: 0.45
   motion_min_area: 500
   motion_threshold: 25.0
   process_every_n_frames: 2
   process_size:
   - 1280
   - 720
-  sources: [0]
+  sources: [
+
+  ]
   target_fps: 10
 detection:
   face_recognition_enabled: true
   face_recognition_threshold: 0.55
   fire_confidence_threshold: 0.85
-  global_enabled: true
   iou_threshold: 0.5
   person_confidence_threshold: 0.6
   smoke_confidence_threshold: 0.8
+fall:
+  enabled: true
+  model_path: Data/Model/Fall/fall.onnx
+  threshold: 0.50
+  n_consecutive: 3
+  window_size: 30
+  stride: 3
+  pose_confidence: 0.8
 fire_logic:
   lockdown_seconds: 300
   object_analysis:
@@ -77,12 +87,6 @@ models:
   face:
     detector_name: Small
     recognizer_name: Small
-  face_model_name: Small
-  insightface_ctx_id: 0
-  insightface_det_size:
-  - 640
-  - 640
-  openvino_device: GPU
   yolo_format: openvino
   yolo_size: medium
 paths:
@@ -95,6 +99,7 @@ paths:
   tmp_dir: Data/tmp
 recorder:
   duration_seconds: 10
+  extension_seconds: 10
   fourcc: mp4v
   fps: 10.0
 reid:
@@ -105,14 +110,12 @@ spam_guard:
   max_per_minute: 4
   min_interval: 15
 telegram:
-  chat_id: -4901296113
+  chat_id: 
   httpx_timeout: 180
-  token: 7874716410:AAFKDHbXiyeaZZzaJGyA2_Qr6r-5mxf3K-g
+  token: 
   user_response_window_seconds: 30
-  video_preview_limit_mb: 48.0
 tracker:
   face_recognition_cooldown: 3.0
   known_person_confirm_frames: 4
   stranger_confirm_frames: 20
-  timeout_seconds: 2.0
-  video_preview_limit_mb: 48.0
+  timeout_seconds: 10.0

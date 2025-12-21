@@ -1,4 +1,4 @@
-# main.py0
+# main.py
 import os
 import time
 import queue
@@ -13,7 +13,6 @@ from config import settings, AlertType, AlertPriority
 from core import CameraManager, Recorder, FaceDetector, FireDetector
 from utils import state_manager, spam_guard, security, init_alarm, play_alarm, stop_alarm, memory_monitor, task_pool
 from bot import GuardianBot, AIAssistant, send_photo, send_video
-from core.detection import BehaviorAnalyzer
 from gui import run_gui
 
 
@@ -74,54 +73,21 @@ class GuardianApp:
             print("❌ Bộ phát hiện cháy không chạy được!")
             return False
         
-        # Khởi tạo phân tích hành vi
-        if settings.get('behavior.enabled', False):
-            print("🧠 Đang tải bộ phân tích hành vi...")
-            try:
-                # Get path model từ config
-                model_path = settings.get('behavior.model_path', 'Data/Model/anomaly_model.pth')
-                model_path = settings.base_dir / model_path
-                
-                # Get thiết bị chạy
-                device = settings.get('behavior.device', 'cpu')
-                
-                # Get ngưỡng
-                threshold = settings.get('behavior.threshold', 0.5)
-                
-                # Check file model
-                if not model_path.exists():
-                    raise FileNotFoundError(f"Không tìm thấy model hành vi: {model_path}")
-                
-                # Bộ phân tích
-                self.behavior_analyzer = BehaviorAnalyzer(
-                    model_path=str(model_path),
-                    device=device,
-                    threshold=threshold
-                )
-                print("✅ Bộ phân tích hành vi đã sẵn sàng!")
-                
-            except Exception as e:
-                print(f"⚠️ Không thể tải phân tích hành vi: {e}")
-                self.behavior_analyzer = None
-        else:
-            print("🧠 Phân tích hành vi đang tắt (có thể bật trong config)")
-            self.behavior_analyzer = None
-        
         # Khởi tạo camera
         print("📹 Đang kết nối camera...")
         try:
             # Quản lý camera
             self.camera_manager = CameraManager(
                 person_alert=self.person_alert,
-                fire_alert=self.fire_alert
+                fire_alert=self.fire_alert,
+                fall_alert=self.fall_alert
             )
             
             # Chạy camera
             self.camera_manager.start(
                 self.fire_detector,
                 self.face_detector,
-                self.state,
-                self.behavior_analyzer
+                self.state
             )
         except Exception as e:
             print(f"❌ Lỗi camera: {e}")
@@ -257,14 +223,52 @@ class GuardianApp:
                 daemon=True
             ).start()
     
+    # XỬ LÝ CẢNH BÁO TÉ NGÃ
+    def fall_alert(self, source_id, frame, alert_type):
+        key = (alert_type, source_id)
+        
+        # Check chống spam
+        if not self.spam_guard.allow(key, critical=True):
+            return
+        
+        # Lưu ảnh
+        img_path = settings.paths.tmp_dir / f"fall_{uuid.uuid4().hex}.jpg"
+        security.save_image(img_path, frame)
+        
+        # Tạo cảnh báo
+        alert_id = self.state.create_alert(
+            alert_type=alert_type,
+            source_id=source_id,
+            chat_id=settings.telegram.chat_id,
+            image_path=str(img_path)
+        )
+        
+        # Tạo nội dung tin nhắn
+        caption = f"🚨 CẢNH BÁO: Phát hiện người té ngã tại camera {source_id}!"
+        
+        # Gửi qua Telegram
+        if self.bot:
+            self.bot.schedule_alert(
+                settings.telegram.chat_id,
+                str(img_path),
+                caption,
+                alert_id,
+                is_fire=False
+            )
+        
+        # Thêm vào ngữ cảnh AI
+        if self.ai_assistant:
+            self.ai_assistant.add_context(settings.telegram.chat_id, caption)
+        
+        # Bắt đầu quay video
+        self.start_recording(source_id, alert_id)
+    
     # CÁC HÀM HỖ TRỢ
     
     # Xác định độ ưu tiên cảnh báo
     def get_priority(self, alert_type, metadata): # alert_type: Loại cảnh báo, metadata: Thông tin cảnh báo
         if alert_type in [AlertType.FIRE_CRITICAL, AlertType.FIRE_WARNING]:
             return AlertPriority.CRITICAL  # Cao nhất
-        if alert_type == AlertType.ANOMALOUS_BEHAVIOR:
-            return AlertPriority.HIGH      # Cao
         if alert_type == AlertType.STRANGER:
             return AlertPriority.MEDIUM    # Trung bình
         return AlertPriority.LOW           # Thấp
@@ -273,9 +277,6 @@ class GuardianApp:
     def get_caption(self, alert_type, source_id, metadata, priority): # alert_type: Loại cảnh báo, source_id: ID camera, metadata: Thông tin cảnh báo, priority: Độ ưu tiên
         if priority == AlertPriority.CRITICAL:
             return f"🚨🔥 KHẨN CẤP - Có cháy tại camera {source_id}!"
-        elif priority == AlertPriority.HIGH:
-            score = metadata.get('score', 0)
-            return f"⚠️🚨 CẢNH BÁO - Hành vi bất thường ({score:.2f}) tại camera {source_id}"
         elif priority == AlertPriority.MEDIUM:
             return f"⚠️ Phát hiện người lạ tại camera {source_id}"
         else:
@@ -286,7 +287,7 @@ class GuardianApp:
     def start_recording(self, source_id, alert_id): # source_id: ID camera, alert_id: ID cảnh báo
         try:
             # Get thời gian quay từ config
-            duration = settings.get('recorder.duration', 30)
+            duration = settings.get('recorder.duration_seconds', 30)
             
             rec = self.recorder.start(
                 source_id=source_id,
@@ -377,8 +378,8 @@ class GuardianApp:
         while not self.shutdown_event.is_set():
             try:
                 # Kiểm tra có đang ghi video không
-                if self.recorder.current and self.camera_manager:
-                    source_id = self.recorder.current.get('source_id')
+                if self.recorder.dang_ghi and self.camera_manager:
+                    source_id = self.recorder.dang_ghi.get('source_id')
                     cam = self.camera_manager.get_camera(source_id) if source_id else None
                     
                     if cam:
@@ -388,7 +389,7 @@ class GuardianApp:
                             self.recorder.write(frame)
                         
                         # Kiểm tra xem có cần kéo dài thời gian ghi không
-                        end_time = self.recorder.current.get('end_time', 0)
+                        end_time = self.recorder.dang_ghi.get('end_time', 0)
                         now = time.time()
                         
                         if 0 < end_time - now < 5.0:  # Còn dưới 5 giây

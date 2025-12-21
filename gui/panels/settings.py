@@ -1,9 +1,7 @@
-"""Enhanced Settings Panel with comprehensive customization"""
+# Panel cài đặt nâng cao với tùy chỉnh toàn diện
 
-from __future__ import annotations
 import json
 from pathlib import Path
-from typing import Dict, Any, Callable
 
 import customtkinter as ctk
 from customtkinter import StringVar, BooleanVar
@@ -11,16 +9,10 @@ from CTkMessagebox import CTkMessagebox
 
 from config import settings
 from gui.styles import Colors, Fonts, Sizes, create_button, create_card, create_entry
-from gui.widgets.activity import log_activity, log_system
 
 
+# Panel cài đặt toàn diện
 class SettingsPanel(ctk.CTkFrame):
-    """Comprehensive settings panel"""
-    
-    __slots__ = (
-        'state', 'pages', 'nav_buttons', 'content',
-        'setting_vars', 'original_values', 'has_changes'
-    )
     
     def __init__(self, parent, state_manager=None, **kwargs):
         super().__init__(parent, fg_color="transparent", **kwargs)
@@ -28,8 +20,8 @@ class SettingsPanel(ctk.CTkFrame):
         self.state = state_manager
         self.pages = {}
         self.nav_buttons = {}
-        self.setting_vars: Dict[str, Any] = {}  # Store all setting variables
-        self.original_values: Dict[str, Any] = {}  # For reset functionality
+        self.setting_vars = {}  # Store all setting variables
+        self.original_values = {}  # For reset functionality
         self.has_changes = BooleanVar(value=False)
         
         self.grid_columnconfigure(0, weight=0)
@@ -45,8 +37,8 @@ class SettingsPanel(ctk.CTkFrame):
         # Select first tab
         self.after(100, lambda: self.select_tab("detection"))
     
+    # Xây dựng thanh điều hướng bên trái
     def build_sidebar(self):
-        """Build navigation sidebar"""
         sidebar = ctk.CTkFrame(self, fg_color=Colors.BG_SECONDARY, width=220, corner_radius=Sizes.RADIUS_LG)
         sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, Sizes.SM))
         sidebar.grid_propagate(False)
@@ -71,7 +63,6 @@ class SettingsPanel(ctk.CTkFrame):
         # Navigation tabs
         tabs = [
             ("detection", "🎯", "Nhận diện"),
-            ("behavior", "🧠", "Hành vi"),
             ("camera", "📹", "Camera"),
             ("alerts", "🔔", "Cảnh báo"),
             ("recording", "⏺️", "Ghi hình"),
@@ -110,8 +101,8 @@ class SettingsPanel(ctk.CTkFrame):
             command=self.reset_settings
         ).pack(fill="x")
     
+    # Xây dựng khu vực nội dung
     def build_content(self):
-        """Build content area"""
         self.content = ctk.CTkFrame(self, fg_color="transparent")
         self.content.grid(row=0, column=1, sticky="nsew")
         self.content.grid_columnconfigure(0, weight=1)
@@ -119,7 +110,6 @@ class SettingsPanel(ctk.CTkFrame):
         
         # Create all pages
         self.pages["detection"] = self.build_detection_page()
-        self.pages["behavior"] = self.build_behavior_page()
         self.pages["camera"] = self.build_camera_page()
         self.pages["alerts"] = self.build_alerts_page()
         self.pages["recording"] = self.build_recording_page()
@@ -128,8 +118,8 @@ class SettingsPanel(ctk.CTkFrame):
         self.pages["appearance"] = self.build_appearance_page()
         self.pages["system"] = self.build_system_page()
     
-    def select_tab(self, key: str):
-        """Switch to selected tab"""
+    # Chuyển đến tab được chọn
+    def select_tab(self, key):
         for k, btn in self.nav_buttons.items():
             if k == key:
                 btn.configure(fg_color=Colors.PRIMARY, text_color=Colors.TEXT_PRIMARY)
@@ -146,8 +136,8 @@ class SettingsPanel(ctk.CTkFrame):
     # PAGE BUILDERS
     # =========================================================================
     
-    def build_detection_page(self) -> ctk.CTkScrollableFrame:
-        """Detection settings page"""
+    # Trang cài đặt nhận diện
+    def build_detection_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
         self.add_header(page, "Cài đặt Nhận diện", 
@@ -193,55 +183,8 @@ class SettingsPanel(ctk.CTkFrame):
         
         return page
     
-    def build_behavior_page(self) -> ctk.CTkScrollableFrame:
-        """Behavior analysis settings"""
-        page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
-        
-        self.add_header(page, "Phân tích Hành vi", 
-                        "Cấu hình phát hiện hành vi bất thường dựa trên pose estimation")
-        
-        card1 = self.create_section(page, "🧠 Cài đặt chung")
-        
-        self.add_switch(card1, "behavior.enabled",
-                        "Bật phân tích hành vi", False,
-                        "Kích hoạt tính năng phát hiện hành vi bất thường")
-        
-        self.add_slider(card1, "behavior.threshold", 
-                        "Ngưỡng bất thường", 0.0, 1.0, 0.5,
-                        "Điểm số tối thiểu để coi là hành vi bất thường")
-        
-        self.add_slider(card1, "behavior.alert_cooldown", 
-                        "Thời gian chờ cảnh báo (giây)", 10, 300, 30,
-                        "Khoảng thời gian tối thiểu giữa 2 cảnh báo")
-        
-        card2 = self.create_section(page, "⚡ Hiệu năng")
-        
-        self.add_slider(card2, "behavior.process_every_n_frames", 
-                        "Xử lý mỗi N frame", 1, 10, 3,
-                        "Bỏ qua frame để tăng tốc (cao hơn = nhanh hơn)")
-        
-        self.add_slider(card2, "behavior.window_size", 
-                        "Cửa sổ phân tích (frames)", 32, 128, 64,
-                        "Số frame để phân tích một chuỗi hành động")
-        
-        self.add_option(card2, "behavior.device",
-                        "Thiết bị xử lý", ["cpu", "cuda"],
-                        "Chọn CPU hoặc GPU để xử lý")
-        
-        card3 = self.create_section(page, "🎨 Hiển thị")
-        
-        self.add_switch(card3, "behavior.show_skeleton",
-                        "Hiển thị skeleton", True,
-                        "Vẽ khung xương người lên video")
-        
-        self.add_switch(card3, "behavior.show_score",
-                        "Hiển thị điểm số", True,
-                        "Hiện điểm hành vi trên box")
-        
-        return page
-    
-    def build_camera_page(self) -> ctk.CTkScrollableFrame:
-        """Camera settings"""
+    # Cài đặt camera
+    def build_camera_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
         self.add_header(page, "Cài đặt Camera", 
@@ -292,8 +235,8 @@ class SettingsPanel(ctk.CTkFrame):
         
         return page
     
-    def build_alerts_page(self) -> ctk.CTkScrollableFrame:
-        """Alert settings"""
+    # Cài đặt cảnh báo
+    def build_alerts_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
         self.add_header(page, "Cài đặt Cảnh báo", 
@@ -327,10 +270,6 @@ class SettingsPanel(ctk.CTkFrame):
                         "Cảnh báo cháy", True,
                         "Gửi thông báo khi phát hiện cháy/khói")
         
-        self.add_switch(card2, "alerts.anomaly_enabled",
-                        "Cảnh báo hành vi bất thường", True,
-                        "Gửi thông báo khi phát hiện hành vi lạ")
-        
         card3 = self.create_section(page, "🔊 Còi báo động")
         
         self.add_switch(card3, "alarm.auto_play_fire",
@@ -347,8 +286,8 @@ class SettingsPanel(ctk.CTkFrame):
         
         return page
     
-    def build_recording_page(self) -> ctk.CTkScrollableFrame:
-        """Recording settings"""
+    # Cài đặt ghi hình
+    def build_recording_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
         self.add_header(page, "Cài đặt Ghi hình", 
@@ -400,8 +339,8 @@ class SettingsPanel(ctk.CTkFrame):
         
         return page
     
-    def build_telegram_page(self) -> ctk.CTkScrollableFrame:
-        """Telegram bot settings"""
+    # Cài đặt Telegram bot
+    def build_telegram_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
         self.add_header(page, "Cài đặt Telegram", 
@@ -442,8 +381,8 @@ class SettingsPanel(ctk.CTkFrame):
         
         return page
     
-    def build_ai_page(self) -> ctk.CTkScrollableFrame:
-        """AI Assistant settings"""
+    # Cài đặt trợ lý AI
+    def build_ai_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
         self.add_header(page, "AI Assistant", 
@@ -491,8 +430,8 @@ class SettingsPanel(ctk.CTkFrame):
         
         return page
     
-    def build_appearance_page(self) -> ctk.CTkScrollableFrame:
-        """Appearance settings"""
+    # Cài đặt giao diện
+    def build_appearance_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
         self.add_header(page, "Giao diện", 
@@ -536,8 +475,8 @@ class SettingsPanel(ctk.CTkFrame):
         
         return page
     
-    def build_system_page(self) -> ctk.CTkScrollableFrame:
-        """System settings"""
+    # Cài đặt hệ thống
+    def build_system_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
         
         self.add_header(page, "Cài đặt Hệ thống", 
@@ -598,8 +537,8 @@ class SettingsPanel(ctk.CTkFrame):
     # HELPER METHODS
     # =========================================================================
     
-    def add_header(self, parent, title: str, subtitle: str):
-        """Add page header"""
+    # Thêm tiêu đề trang
+    def add_header(self, parent, title, subtitle):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", pady=(0, Sizes.MD))
         
@@ -608,8 +547,8 @@ class SettingsPanel(ctk.CTkFrame):
         ctk.CTkLabel(frame, text=subtitle, font=Fonts.BODY, 
                     text_color=Colors.TEXT_MUTED).pack(anchor="w")
     
-    def create_section(self, parent, title: str) -> ctk.CTkFrame:
-        """Create a section card"""
+    # Tạo thẻ section
+    def create_section(self, parent, title):
         card = create_card(parent)
         card.pack(fill="x", pady=(0, Sizes.MD))
         
@@ -618,10 +557,10 @@ class SettingsPanel(ctk.CTkFrame):
         
         return card
     
-    def add_slider(self, parent, key: str, label: str, 
-                   min_val: float, max_val: float, default: float,
-                   description: str = ""):
-        """Add slider setting"""
+    # Thêm cài đặt slider
+    def add_slider(self, parent, key, label, 
+                   min_val, max_val, default,
+                   description=""):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
         
@@ -633,7 +572,7 @@ class SettingsPanel(ctk.CTkFrame):
                     text_color=Colors.TEXT_PRIMARY).pack(side="left")
         
         # Determine if integer
-        is_int = isinstance(default, int) or (min_val == int(min_val) and max_val == int(max_val))
+        is_int = isinstance(default, int) and isinstance(min_val, int) and isinstance(max_val, int)
         current = settings.get(key, default)
         
         value_var = StringVar(value=str(int(current) if is_int else f"{current:.2f}"))
@@ -665,8 +604,8 @@ class SettingsPanel(ctk.CTkFrame):
         slider.configure(command=on_change)
         self.setting_vars[key]["widget"] = slider
     
-    def add_switch(self, parent, key: str, label: str, default: bool, description: str = ""):
-        """Add switch setting"""
+    # Thêm cài đặt switch
+    def add_switch(self, parent, key, label, default, description=""):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
         
@@ -696,8 +635,8 @@ class SettingsPanel(ctk.CTkFrame):
         switch.pack(side="right")
         self.setting_vars[key]["widget"] = switch
     
-    def add_option(self, parent, key: str, label: str, options: list, description: str = ""):
-        """Add option menu setting"""
+    # Thêm menu lựa chọn
+    def add_option(self, parent, key, label, options, description=""):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
         
@@ -730,8 +669,8 @@ class SettingsPanel(ctk.CTkFrame):
         menu.pack(side="right")
         self.setting_vars[key]["widget"] = menu
     
-    def add_text_input(self, parent, key: str, label: str, placeholder: str, is_password: bool = False):
-        """Add text input setting"""
+    # Thêm ô nhập liệu text
+    def add_text_input(self, parent, key, label, placeholder, is_password=False):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
         
@@ -758,8 +697,8 @@ class SettingsPanel(ctk.CTkFrame):
         
         self.setting_vars[key] = {"widget": entry, "type": "text"}
     
-    def add_path_input(self, parent, key: str, label: str, current: str):
-        """Add path input with browse button"""
+    # Thêm ô nhập đường dẫn với nút duyệt file
+    def add_path_input(self, parent, key, label, current):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
         frame.pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
         
@@ -796,15 +735,15 @@ class SettingsPanel(ctk.CTkFrame):
     # ACTIONS
     # =========================================================================
     
+    # Tải các giá trị cài đặt hiện tại
     def load_current_settings(self):
-        """Load current settings values"""
         for key, data in self.setting_vars.items():
             current = settings.get(key)
             if current is not None:
                 self.original_values[key] = current
     
+    # Lưu tất cả cài đặt
     def save_settings(self):
-        """Save all settings"""
         try:
             changes = {}
             
@@ -856,8 +795,8 @@ class SettingsPanel(ctk.CTkFrame):
                 icon="check"
             )
             
-            log_activity("Settings saved", "success")
-            log_system("Configuration updated", "info")
+            print("✅ Settings saved")
+            print("ℹ️ [SYSTEM] Configuration updated")
             
         except Exception as e:
             CTkMessagebox(
@@ -957,12 +896,12 @@ class SettingsPanel(ctk.CTkFrame):
                 icon="check"
             )
             
-            log_activity("Temp data cleared", "info")
+            print("ℹ️ Temp data cleared")
             
         except Exception as e:
             CTkMessagebox(
                 title="Lỗi",
-                message=f"Không thể xóa: {e}",
+                message=f"Không thể lưu: {e}",
                 icon="cancel"
             )
     

@@ -11,11 +11,11 @@ import numpy as np
 
 from config import settings
 from core.camera import Camera
-from core.detection import PersonTracker, BehaviorAnalyzer
+from core.detection import PersonTracker
 
 
 class CameraManager:
-    def __init__(self, person_alert=None, fire_alert=None):
+    def __init__(self, person_alert=None, fire_alert=None, fall_alert=None):
         # Lưu các camera
         self.cameras = {} # Key: ID camera, Value: Object Camera
         
@@ -28,11 +28,11 @@ class CameraManager:
         # Lưu các detector để dùng khi thêm camera mới
         self.fire_detector = None
         self.face_detector = None
-        self.behavior_analyzer = None
         self.state = None
         
         self.person_alert = person_alert
         self.fire_alert = fire_alert
+        self.fall_alert = fall_alert
         
         # Tạo camera từ config
         self.create_cameras()
@@ -54,7 +54,7 @@ class CameraManager:
                     src = source
                 
                 # Tạo camera
-                cam = Camera(src, self.person_alert, self.fire_alert, shared_model=None)
+                cam = Camera(src, self.person_alert, self.fire_alert, self.fall_alert, shared_model=None)
                 
                 # Thêm vào dictionary
                 self.cameras[str(source)] = cam
@@ -64,18 +64,17 @@ class CameraManager:
                 print(f"❌ Lỗi tạo camera {source}: {e}")
     
     # Chạy tất cả camera
-    def start(self, fire_detector, face_detector, state_manager, behavior_analyzer=None): # fire_detector: Bộ phát hiện cháy, face_detector: Bộ nhận diện khuôn mặt, state_manager: Quản lý trạng thái, behavior_analyzer: Bộ phân tích hành vi
+    def start(self, fire_detector, face_detector, state_manager):
         # Lưu lại để dùng khi thêm camera mới
         self.fire_detector = fire_detector
         self.face_detector = face_detector
-        self.behavior_analyzer = behavior_analyzer
         self.state = state_manager
         
         # Dùng lock để tránh xung đột
         with self.lock:
             for source, cam in self.cameras.items():
                 # Khởi tạo các worker trong camera
-                cam.start_workers(fire_detector, face_detector, behavior_analyzer)
+                cam.start_workers(fire_detector, face_detector)
                 
                 # Tạo thread riêng cho mỗi camera
                 # daemon=True: thread tự tắt khi chương trình main tắt
@@ -142,11 +141,11 @@ class CameraManager:
                 src = source
             
             # Tạo camera mới
-            cam = Camera(src, self.person_alert, self.fire_alert, shared_model=None)
+            cam = Camera(src, self.person_alert, self.fire_alert, self.fall_alert, shared_model=None)
             
             # Nếu hệ thống đã chạy, start camera luôn
             if self.fire_detector and self.face_detector:
-                cam.start_workers(self.fire_detector, self.face_detector, self.behavior_analyzer)
+                cam.start_workers(self.fire_detector, self.face_detector)
                 
                 # Tạo thread
                 thread = threading.Thread(
