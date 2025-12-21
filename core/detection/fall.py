@@ -2,77 +2,88 @@
 # =============================================================================
 # PHÁT HIỆN TÉ NGÃ (FALL DETECTION)
 # =============================================================================
-# Module này phát hiện té ngã sử dụng model ONNX và MediaPipe Pose
-# Logic: Thu thập keypoints theo thời gian -> Tính features -> Dự đoán
-# =============================================================================
-
 import numpy as np
 from collections import deque
-
 import cv2
-import mediapipe as mp
+from rtmlib import Body
 import onnxruntime as ort
-
 from config import settings
 
 
-# Mapping từ MediaPipe (33 keypoints) sang COCO format (17 keypoints)
-MP_TO_COCO = {
-    0: 0,    # nose
-    2: 1,    # left eye
-    5: 2,    # right eye
-    7: 3,    # left ear
-    8: 4,    # right ear
-    11: 5,   # left shoulder
-    12: 6,   # right shoulder
-    13: 7,   # left elbow
-    14: 8,   # right elbow
-    15: 9,   # left wrist
-    16: 10,  # right wrist
-    23: 11,  # left hip
-    24: 12,  # right hip
-    25: 13,  # left knee
-    26: 14,  # right knee
-    27: 15,  # left ankle
-    28: 16,  # right ankle
-}
+# COCO skeleton connections (các cặp điểm nối với nhau)
+COCO_SKELETON = [
+    (0, 1), (0, 2),           # mũi -> mắt
+    (1, 3), (2, 4),           # mắt -> tai
+    (5, 6),                   # vai
+    (5, 7), (7, 9),           # cánh tay
+    (6, 8), (8, 10),          # cánh tay
+    (5, 11), (6, 12),         # xương sống
+    (11, 12),                 # xương sống
+    (11, 13), (13, 15),       # chân
+    (12, 14), (14, 16),       # chân
+]
+
+# Màu sắc cho skeleton (BGR)
+SKELETON_COLOR = (0, 255, 255)    # Vàng cho bones
+KEYPOINT_COLOR = (0, 255, 0)      # Xanh lá cho keypoints
+FALL_SKELETON_COLOR = (0, 0, 255)  # Đỏ khi fall detected
+
+# Vẽ xương lên frame
+def draw_skeleton(frame, kps_normalized, is_fall=False):
+    h, w = frame.shape[:2]
+    
+    # Chọn màu dựa vào trạng thái fall
+    bone_color = FALL_SKELETON_COLOR if is_fall else SKELETON_COLOR
+    point_color = FALL_SKELETON_COLOR if is_fall else KEYPOINT_COLOR
+    
+    # Chuyển tọa độ chuẩn hóa thành tọa độ pixel
+    kps_pixel = np.zeros_like(kps_normalized)
+    kps_pixel[:, 0] = kps_normalized[:, 0] * w
+    kps_pixel[:, 1] = kps_normalized[:, 1] * h
+    kps_pixel = kps_pixel.astype(int)
+    
+    # Vẽ xương
+    for (i, j) in COCO_SKELETON:
+        pt1 = tuple(kps_pixel[i])
+        pt2 = tuple(kps_pixel[j])
+        # Chỉ vẽ nếu cả 2 điểm đều valid (không ở góc 0,0)
+        if pt1[0] > 0 and pt1[1] > 0 and pt2[0] > 0 and pt2[1] > 0:
+            cv2.line(frame, pt1, pt2, bone_color, 2, cv2.LINE_AA)
+    
+    # Vẽ keypoints
+    for i, (x, y) in enumerate(kps_pixel):
+        if x > 0 and y > 0:
+            cv2.circle(frame, (x, y), 4, point_color, -1, cv2.LINE_AA)
+            cv2.circle(frame, (x, y), 4, (0, 0, 0), 1, cv2.LINE_AA)  # viền đen
+    
+    return frame
 
 
-# =============================================================================
-# FEATURE EXTRACTION (Giống logic training)
-# =============================================================================
-
-# Chuẩn hóa keypoints về tâm hông (hip center)
-# keypoints_T_17_2: (T, 17, 2) - T frames, 17 keypoints, x/y
-# return: (T, 17, 2) đã chuẩn hóa
-# Tính tâm hông = trung bình left_hip và right_hip
+# Chuẩn hóa keypoints giúp không bị ảnh hưởng bởi vị trí hay kích thước của người
 def normalize_keypoints(keypoints_T_17_2):
-    hip_center = (keypoints_T_17_2[:, 11] + keypoints_T_17_2[:, 12]) / 2.0  # (T,2)
-    normalized = keypoints_T_17_2 - hip_center[:, None, :]  # (T,17,2)
+    hip_center = (keypoints_T_17_2[:, 11] + keypoints_T_17_2[:, 12]) / 2.0  # Tâm hông = trung bình hông trái và hông phải
+    normalized = keypoints_T_17_2 - hip_center[:, None, :]  # Tính khoảng cách từ tâm hông (Đặt trục tại tâm hông)
     
     # Scale theo khoảng cách vai
     shoulder_dist = np.linalg.norm(
         keypoints_T_17_2[:, 5] - keypoints_T_17_2[:, 6], axis=1
-    )  # (T,)
-    scale = float(np.mean(shoulder_dist))
-    if scale > 1e-6:
+    )  # Khoảng cách giữa vai trái và vai phải
+    scale = float(np.mean(shoulder_dist))  # Trung bình khoảng cách vai các frame
+    if scale > 1e-6: # Tránh chia cho 0
         normalized = normalized / scale
     
     return normalized
 
 
-# Tính features từ keypoints: position + velocity
-# keypoints_T_17_2: (T, 17, 2)
-# return: (T, 68) - 34 pos + 34 vel
+# Tính đặc trưng từ keypoints: vị trí vs vận tốc
 def compute_features(keypoints_T_17_2):
-    T = keypoints_T_17_2.shape[0]
-    pos = keypoints_T_17_2.reshape(T, -1)  # (T, 34)
+    T = keypoints_T_17_2.shape[0] # Số frame
+    pos = keypoints_T_17_2.reshape(T, -1)  # Trải phẳng thành một hàng vs len = 34 * T
     
-    # Velocity = frame[t] - frame[t-1]
-    vel = np.zeros_like(pos)
-    vel[1:] = pos[1:] - pos[:-1]  # (T, 34)
+    vel = np.zeros_like(pos)      # Tạo vector vận tốc với cùng kích thước và giá trị = 0
+    vel[1:] = pos[1:] - pos[:-1]  # Tính vector vận tốc
     
-    feats = np.concatenate([pos, vel], axis=1).astype(np.float32)  # (T, 68)
+    feats = np.concatenate([pos, vel], axis=1).astype(np.float32)  # pos + vel
     return feats
 
 
@@ -163,47 +174,56 @@ class FallONNX:
 
 
 # =============================================================================
-# POSE EXTRACTOR
+# POSE EXTRACTOR (RTMPose)
 # =============================================================================
 
-# Trích xuất pose từ frame sử dụng MediaPipe
+# Trích xuất pose từ frame sử dụng RTMPose (rtmlib)
+# Chính xác hơn MediaPipe, ít ghost detection
 class PoseExtractor:
     
-    def __init__(self, confidence_threshold=0.8):
-        self.pose = mp.solutions.pose.Pose(
-            static_image_mode=False,
-            model_complexity=1,
-            min_detection_confidence=0.5,
-            min_tracking_confidence=0.5,
-        )
+    def __init__(self, confidence_threshold=0.5, mode='balanced', device='cpu', backend='onnxruntime'):
         self.confidence_threshold = confidence_threshold
+        
+        # Body model sử dụng RTMPose
+        # Mode: 'lightweight' (Small - nhanh), 'balanced' (Medium), 'performance' (Large - chính xác)
+        # to_openpose=False -> output COCO 17 keypoints
+        self.body = Body(
+            to_openpose=False,
+            mode=mode,
+            backend=backend,
+            device=device
+        )
+        self.img_shape = None
     
     # Trích xuất 17 keypoints từ frame
     # frame_bgr: Frame BGR từ OpenCV
     # return: (keypoints (17, 2), confidence) hoặc (None, 0) nếu không detect được
     def extract_17xy(self, frame_bgr):
-        rgb = cv2.cvtColor(frame_bgr, cv2.COLOR_BGR2RGB)
-        res = self.pose.process(rgb)
+        h, w = frame_bgr.shape[:2]
+        self.img_shape = (h, w)
         
-        if not res.pose_landmarks:
+        # RTMPose inference
+        keypoints, scores = self.body(frame_bgr)
+        
+        # Không detect được người nào
+        if keypoints is None or len(keypoints) == 0:
             return None, 0.0
         
-        lms = res.pose_landmarks.landmark
-        kps = np.zeros((17, 2), dtype=np.float32)
-        confs = []
+        # Lấy người đầu tiên (có thể mở rộng cho multi-person sau)
+        kps = keypoints[0]  # (17, 2) - pixel coordinates
+        confs = scores[0]   # (17,) - confidence scores
         
-        for mp_idx, coco_idx in MP_TO_COCO.items():
-            lm = lms[mp_idx]
-            kps[coco_idx] = [lm.x, lm.y]  # normalized 0..1
-            confs.append(lm.visibility)
+        # Normalize về 0..1 (giống MediaPipe output)
+        kps_normalized = np.zeros((17, 2), dtype=np.float32)
+        kps_normalized[:, 0] = kps[:, 0] / w  # x
+        kps_normalized[:, 1] = kps[:, 1] / h  # y
         
-        return kps, float(np.mean(confs))
+        avg_conf = float(np.mean(confs))
+        return kps_normalized, avg_conf
     
     def close(self):
-        try:
-            self.pose.close()
-        except:
-            pass
+        # rtmlib không cần close, nhưng giữ method để compatible
+        pass
 
 
 # =============================================================================
@@ -215,7 +235,8 @@ class PoseExtractor:
 # 1. Khởi tạo: detector = FallDetector()
 # 2. Mỗi frame: detector.update(frame)
 # 3. Kiểm tra: is_fall, prob = detector.check_fall()
-# 4. Khi xong: detector.close()
+# 4. Vẽ skeleton: detector.draw_skeleton(frame)
+# 5. Khi xong: detector.close()
 class FallDetector:
     
     def __init__(self):
@@ -228,14 +249,25 @@ class FallDetector:
         
         # Config
         model_path = settings.get('fall.model_path', 'Data/Model/Fall/fall.onnx')
-        self.threshold = settings.get('fall.threshold', 0.50)
+        self.threshold = settings.get('fall.threshold', 0.80)
         self.n_consecutive = settings.get('fall.n_consecutive', 3)
         self.window_size = settings.get('fall.window_size', 30)
         self.stride = settings.get('fall.stride', 3)
-        self.pose_confidence = settings.get('fall.pose_confidence', 0.8)
+        self.pose_confidence = settings.get('fall.pose_confidence', 0.5)
         self.num_segments = 30  # Giữ nguyên theo model training
         self.miss_threshold = 10  # Số frame mất track để reset
         
+        # Đọc config model pose
+        pose_model_name = settings.get('models.pose.model_name', 'Medium')
+        
+        # Mapping Small/Medium/Large -> lightweight/balanced/performance
+        mode_map = {
+            'Small': 'lightweight',
+            'Medium': 'balanced',
+            'Large': 'performance'
+        }
+        self.pose_mode = mode_map.get(pose_model_name, 'balanced')
+
         # Khởi tạo model
         try:
             from pathlib import Path
@@ -248,8 +280,12 @@ class FallDetector:
             self.enabled = False
             return
         
-        # Khởi tạo pose extractor
-        self.pose_extractor = PoseExtractor(self.pose_confidence)
+        # Khởi tạo pose extractor (RTMPose)
+        self.pose_extractor = PoseExtractor(
+            confidence_threshold=self.pose_confidence,
+            mode=self.pose_mode
+        )
+        print(f"📐 RTMPose mode: {self.pose_mode} ({pose_model_name})")
         
         # Buffer lưu keypoints
         self.buffer = deque(maxlen=self.window_size)
@@ -329,6 +365,19 @@ class FallDetector:
             return False, 0.0
         
         return self.is_fall_detected, self.last_prob or 0.0
+    
+    # Vẽ skeleton lên frame
+    # frame: Frame BGR từ OpenCV
+    # return: Frame đã vẽ skeleton
+    def draw_skeleton_overlay(self, frame):
+        if not self.enabled or self.last_kps is None:
+            return frame
+        
+        return draw_skeleton(frame, self.last_kps, is_fall=self.is_fall_detected)
+    
+    # Lấy keypoints hiện tại
+    def get_keypoints(self):
+        return self.last_kps
     
     # Reset trạng thái detection
     def reset(self):

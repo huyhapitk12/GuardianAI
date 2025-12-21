@@ -7,7 +7,7 @@ from pathlib import Path
 
 from concurrent.futures import ThreadPoolExecutor
 import psutil
-import pygamea
+import pygame
 from config import settings
 
 # Thử lại khi lỗi

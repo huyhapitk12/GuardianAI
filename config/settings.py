@@ -17,7 +17,6 @@ class Settings:
         self._config = self._resolve_env_vars(config_data)
         self._resolve_paths()
         self._process_special_values()
-        self._create_dynamic_enums()
 
     # Đệ quy xử lý biến môi trường trong config
     def _resolve_env_vars(self, data):

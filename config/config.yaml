@@ -1,10 +1,10 @@
 ai:
-  api_base: 
-  api_key: 
+  api_base: null
+  api_key: null
   enabled: false
   max_history_turns: 5
   max_tokens: 512
-  model: 
+  model: null
   temperature: 0.5
   use_llm_for_classification: false
 alarm:
@@ -12,6 +12,7 @@ alarm:
   max_volume: 5.0
   start_volume: 1.0
 camera:
+  debug_fire_detection: false
   fire_filter:
     infrared:
       bright_core_ratio_min: 0.08
@@ -39,19 +40,16 @@ camera:
       rgb_white_threshold: 0.88
       saturation_min: 80
       texture_entropy_min: 4.0
-  max_reconnect_attempts: 10
-  debug_fire_detection: false
   infrared:
     person_detection_threshold: 0.45
+  max_reconnect_attempts: 10
   motion_min_area: 500
   motion_threshold: 25.0
   process_every_n_frames: 2
   process_size:
   - 1280
   - 720
-  sources: [
-
-  ]
+  sources: 01.mp4
   target_fps: 10
 detection:
   face_recognition_enabled: true
@@ -63,11 +61,11 @@ detection:
 fall:
   enabled: true
   model_path: Data/Model/Fall/fall.onnx
-  threshold: 0.50
   n_consecutive: 3
-  window_size: 30
-  stride: 3
   pose_confidence: 0.8
+  stride: 3
+  threshold: 0.8
+  window_size: 30
 fire_logic:
   lockdown_seconds: 300
   object_analysis:
@@ -87,6 +85,8 @@ models:
   face:
     detector_name: Small
     recognizer_name: Small
+  pose:
+    model_name: Medium  # Small (lightweight), Medium (balanced), Large (performance)
   yolo_format: openvino
   yolo_size: medium
 paths:
@@ -110,9 +110,9 @@ spam_guard:
   max_per_minute: 4
   min_interval: 15
 telegram:
-  chat_id: 
+  chat_id: null
   httpx_timeout: 180
-  token: 
+  token: null
   user_response_window_seconds: 30
 tracker:
   face_recognition_cooldown: 3.0
