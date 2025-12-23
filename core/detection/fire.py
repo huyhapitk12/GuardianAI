@@ -277,7 +277,7 @@ class FireDetector:
         
         try:
             # Lấy cấu hình từ settings
-            yolo_size = settings.get('models.yolo_size', 'medium').lower()
+            yolo_size = settings.get('models.mode', 'Medium').lower()
             yolo_format = settings.get('models.yolo_format', 'openvino')
             
             # Lấy đường dẫn model

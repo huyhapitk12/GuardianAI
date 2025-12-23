@@ -338,7 +338,7 @@ class GuardianApp:
     
     # Chụp ảnh từ camera
     def get_snapshot(self, chat_id, source=None):
-        if not self.camera_manager:
+        if not sel.camera_manager:
             return
         
         # Lấy danh sách camera

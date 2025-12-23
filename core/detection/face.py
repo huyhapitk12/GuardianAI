@@ -24,26 +24,22 @@ class FaceDetector:
         print("face detector init")
     
     # khởi tạo model
-    def initialize(self, detector="Small", recognizer="Small"):
+    def initialize(self):
         try:
-            # os.environ['OMP_NUM_THREADS'] = '4' # old code
+            # Đọc config
+            mode = settings.get('models.mode', 'Small')
+            device = settings.get('models.device', 'cpu')
             
-            providers = ['CPUExecutionProvider']
-            try:
-                import onnxruntime as ort
-                # print("onnx check...")
-                available = set(ort.get_available_providers())
-                for p in ['CUDAExecutionProvider', 'OpenVINOExecutionProvider', 'DmlExecutionProvider']:
-                    if p in available:
-                        providers.insert(0, p)
-                        break
-            except Exception:
-                pass
+            # Xác định provider dựa trên device
+            if device.lower() == 'gpu':
+                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+            else:
+                providers = ['CPUExecutionProvider']
             
             # tìm model
             model_dir = settings.paths.model_dir
-            det_path = self.find_model(model_dir / detector, "detect")
-            rec_path = self.find_model(model_dir / recognizer, "recog")
+            det_path = self.find_model(model_dir / mode, "detect")
+            rec_path = self.find_model(model_dir / mode, "recog")
             
             if not det_path or not rec_path:
                 print("khong thay model face")
@@ -54,7 +50,7 @@ class FaceDetector:
             
             self.app.prepare(ctx_id=0, det_size=(640, 640))
             
-            print(f"init face model: {detector}/{recognizer}")
+            print(f"init face model: {mode} | device: {device}")
             return True
             
         except Exception as e:

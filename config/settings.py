@@ -47,10 +47,26 @@ class Settings:
         if 'camera' in self._config and 'sources' in self._config['camera']:
             sources_val = self._config['camera']['sources']
             if isinstance(sources_val, str):
-                self._config['camera']['sources'] = [s.strip() for s in sources_val.split(',')]
-            elif not isinstance(sources_val, list):
+                # Parse string thành list, lọc bỏ giá trị None/rỗng
+                sources_list = []
+                for s in sources_val.split(','):
+                    s = s.strip()
+                    # Bỏ qua giá trị None, rỗng
+                    if s and s.lower() != 'none':
+                        # Chuyển thành int nếu là số
+                        if s.isdigit():
+                            sources_list.append(int(s))
+                        else:
+                            sources_list.append(s)
+                self._config['camera']['sources'] = sources_list
+            elif isinstance(sources_val, list):
+                # Lọc bỏ None trong list
+                self._config['camera']['sources'] = [s for s in sources_val if s is not None]
+            elif sources_val is not None:
                 # Handle int or other single values
                 self._config['camera']['sources'] = [sources_val]
+            else:
+                self._config['camera']['sources'] = []
 
     # Lấy đường dẫn model YOLO dựa trên loại, kích thước và định dạng
     def get_yolo_model_path(self, model_type, size, format_type=None):

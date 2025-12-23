@@ -330,8 +330,15 @@ class Camera:
             return
         
         try:
-            # Cập nhật fall detector với frame hiện tại
-            self.fall_detector.update(frame)
+            # Lấy bbox của người đầu tiên từ person tracker (tránh chạy YOLOX lần 2)
+            tracks = self.person_tracker.tracks
+            bbox = None
+            if tracks:
+                first_track = next(iter(tracks.values()))
+                bbox = first_track.bbox  # (x1, y1, x2, y2)
+            
+            # Cập nhật fall detector với frame và bbox
+            self.fall_detector.update(frame, bbox=bbox)
             
             # Kiểm tra trạng thái té ngã
             is_fall, prob = self.fall_detector.check_fall()
@@ -452,6 +459,10 @@ class Camera:
         if self.is_ir:
             cv2.putText(frame, "IR MODE", (10, frame.shape[0] - 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
+        
+        # ----- Vẽ skeleton nếu có fall detector -----
+        if self.fall_detector and self.fall_detector.last_kps is not None:
+            self.fall_detector.draw_skeleton_overlay(frame)
         
         # ----- Hiển thị phát hiện té ngã -----
         if self.is_fall_detected:

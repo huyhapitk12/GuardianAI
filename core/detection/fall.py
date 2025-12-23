@@ -88,9 +88,6 @@ def compute_features(keypoints_T_17_2):
 
 
 # Padding hoặc truncate về số segment cố định
-# features_T_D: (T, D)
-# num_segments: số segment mong muốn
-# return: (num_segments, D)
 def to_num_segments(features_T_D, num_segments):
     T = features_T_D.shape[0]
     
@@ -151,8 +148,6 @@ class FallONNX:
         self.topk_ratio = 0.2  # Top-K ratio cho segment logits
     
     # Dự đoán xác suất té ngã
-    # x_1_T_D: (1, T, D) - 1 batch, T frames, D features
-    # return: float - xác suất té ngã [0, 1]
     def predict_prob(self, x_1_T_D):
         x_1_T_D = np.asarray(x_1_T_D, dtype=np.float32)
         out = self.sess.run([self.out_name], {self.in_name: x_1_T_D})[0]
@@ -178,7 +173,6 @@ class FallONNX:
 # =============================================================================
 
 # Trích xuất pose từ frame sử dụng RTMPose (rtmlib)
-# Chính xác hơn MediaPipe, ít ghost detection
 class PoseExtractor:
     
     def __init__(self, confidence_threshold=0.5, mode='balanced', device='cpu', backend='onnxruntime'):
@@ -188,41 +182,64 @@ class PoseExtractor:
         # Mode: 'lightweight' (Small - nhanh), 'balanced' (Medium), 'performance' (Large - chính xác)
         # to_openpose=False -> output COCO 17 keypoints
         self.body = Body(
-            to_openpose=False,
+            to_openpose=False,  
             mode=mode,
             backend=backend,
             device=device
         )
+        # Lấy pose model để dùng trực tiếp với bbox (bỏ qua YOLOX)
+        self.pose_model = self.body.pose_model
         self.img_shape = None
     
-    # Trích xuất 17 keypoints từ frame
-    # frame_bgr: Frame BGR từ OpenCV
-    # return: (keypoints (17, 2), confidence) hoặc (None, 0) nếu không detect được
+    # Trích xuất 17 keypoints từ frame với bbox có sẵn (tối ưu - không chạy YOLOX)
+    def extract_with_bbox(self, frame_bgr, bbox):
+        h, w = frame_bgr.shape[:2]
+        self.img_shape = (h, w)
+        
+        # Chuyển bbox sang format rtmlib [x1, y1, x2, y2]
+        x1, y1, x2, y2 = map(int, bbox)
+        bboxes = [[x1, y1, x2, y2]]
+        
+        # Chạy pose model trực tiếp với bbox (không cần YOLOX)
+        keypoints, scores = self.pose_model(frame_bgr, bboxes=bboxes)
+        
+        if keypoints is None or len(keypoints) == 0:
+            return None, 0.0
+        
+        kps = keypoints[0]  # (17, 2)
+        confs = scores[0]   # (17,)
+        
+        # Normalize về 0..1
+        kps_normalized = np.zeros((17, 2), dtype=np.float32)
+        kps_normalized[:, 0] = kps[:, 0] / w
+        kps_normalized[:, 1] = kps[:, 1] / h
+        
+        avg_conf = float(np.mean(confs))
+        return kps_normalized, avg_conf
+    
+    # Trích xuất 17 keypoints từ frame (tự detect người bằng YOLOX)
     def extract_17xy(self, frame_bgr):
         h, w = frame_bgr.shape[:2]
         self.img_shape = (h, w)
         
-        # RTMPose inference
+        # RTMPose inference (có chạy YOLOX)
         keypoints, scores = self.body(frame_bgr)
         
-        # Không detect được người nào
         if keypoints is None or len(keypoints) == 0:
             return None, 0.0
         
-        # Lấy người đầu tiên (có thể mở rộng cho multi-person sau)
-        kps = keypoints[0]  # (17, 2) - pixel coordinates
-        confs = scores[0]   # (17,) - confidence scores
+        kps = keypoints[0]  # (17, 2)
+        confs = scores[0]   # (17,)
         
-        # Normalize về 0..1 (giống MediaPipe output)
+        # Normalize về 0..1
         kps_normalized = np.zeros((17, 2), dtype=np.float32)
-        kps_normalized[:, 0] = kps[:, 0] / w  # x
-        kps_normalized[:, 1] = kps[:, 1] / h  # y
+        kps_normalized[:, 0] = kps[:, 0] / w
+        kps_normalized[:, 1] = kps[:, 1] / h
         
         avg_conf = float(np.mean(confs))
         return kps_normalized, avg_conf
     
     def close(self):
-        # rtmlib không cần close, nhưng giữ method để compatible
         pass
 
 
@@ -257,16 +274,16 @@ class FallDetector:
         self.num_segments = 30  # Giữ nguyên theo model training
         self.miss_threshold = 10  # Số frame mất track để reset
         
-        # Đọc config model pose
-        pose_model_name = settings.get('models.pose.model_name', 'Medium')
+        # Đọc config model
+        model_mode = settings.get('models.mode', 'Medium')
+        device = settings.get('models.device', 'cpu')
         
-        # Mapping Small/Medium/Large -> lightweight/balanced/performance
+        # Mapping Small/Medium -> lightweight/balanced
         mode_map = {
             'Small': 'lightweight',
-            'Medium': 'balanced',
-            'Large': 'performance'
+            'Medium': 'balanced'
         }
-        self.pose_mode = mode_map.get(pose_model_name, 'balanced')
+        self.pose_mode = mode_map.get(model_mode, 'balanced')
 
         # Khởi tạo model
         try:
@@ -283,9 +300,10 @@ class FallDetector:
         # Khởi tạo pose extractor (RTMPose)
         self.pose_extractor = PoseExtractor(
             confidence_threshold=self.pose_confidence,
-            mode=self.pose_mode
+            mode=self.pose_mode,
+            device=device
         )
-        print(f"📐 RTMPose mode: {self.pose_mode} ({pose_model_name})")
+        print(f"📐 RTMPose mode: {self.pose_mode} ({model_mode}) | Device: {device}")
         
         # Buffer lưu keypoints
         self.buffer = deque(maxlen=self.window_size)
@@ -299,16 +317,21 @@ class FallDetector:
         self.is_fall_detected = False
     
     # Cập nhật với frame mới
-    # frame: Frame BGR từ OpenCV
-    # return: None (kết quả lấy qua check_fall())
-    def update(self, frame):
+    # frame: Frame BGR từ OpenCV  
+    # bbox: Bounding box (x1,y1,x2,y2) từ person detector (tùy chọn - tối ưu hiệu năng)
+    def update(self, frame, bbox=None):
         if not self.enabled or self.model is None:
             return
         
         self.frame_count += 1
         
         # Trích xuất pose
-        kps, conf = self.pose_extractor.extract_17xy(frame)
+        if bbox is not None:
+            # Có bbox từ person detector -> dùng trực tiếp, bỏ qua YOLOX (nhanh hơn)
+            kps, conf = self.pose_extractor.extract_with_bbox(frame, bbox)
+        else:
+            # Không có bbox -> phải tự detect bằng YOLOX (chậm hơn)
+            kps, conf = self.pose_extractor.extract_17xy(frame)
         
         if kps is not None and conf > self.pose_confidence:
             self.last_kps = kps

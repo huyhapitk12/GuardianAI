@@ -49,7 +49,7 @@ camera:
   process_size:
   - 1280
   - 720
-  sources: 
+  sources: None
   target_fps: 10
 detection:
   face_recognition_enabled: true
@@ -82,13 +82,9 @@ fire_logic:
   window_seconds: 15
   yellow_alert_frames: 8
 models:
-  face:
-    detector_name: Small
-    recognizer_name: Small
-  pose:
-    model_name: Medium  # Small (lightweight), Medium (balanced), Large (performance)
+  device: cpu
+  mode: Small
   yolo_format: openvino
-  yolo_size: medium
 paths:
   alarm_sound: Data/Audio/alarm.mp3
   data_dir: Data

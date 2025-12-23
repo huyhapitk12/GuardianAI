@@ -109,7 +109,7 @@ class PersonTracker:
         
         try:
             # Lấy cấu hình model
-            yolo_size = settings.get('models.yolo_size', 'medium').lower()
+            yolo_size = settings.get('models.mode', 'Medium').lower()
             yolo_format = settings.get('models.yolo_format', 'openvino')
             path = settings.get_yolo_model_path('person', yolo_size, yolo_format)
             
