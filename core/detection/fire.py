@@ -1,33 +1,16 @@
-# core/detection/fire.py
-# =============================================================================
-# MODULE PHÁT HIỆN CHÁY - FIRE DETECTION
-# =============================================================================
-# Module này phát hiện lửa và khói trong video từ camera
-# Sử dụng 2 phương pháp:
-# 1. YOLO: Mạng neural network để nhận diện vật thể
-# 2. Bộ lọc màu: Phân tích màu sắc đặc trưng của lửa
-# =============================================================================
+# Module phát hiện cháy (YOLO + Bộ lọc màu)
 
 import cv2
 import numpy as np
 from collections import deque
 
 # Import thư viện YOLO (mạng nhận diện vật thể)
-try:
-    from ultralytics import YOLO
-except ImportError:
-    YOLO = None
-    print("⚠️ Không tìm thấy thư viện ultralytics/YOLO!")
+from ultralytics import YOLO
 
 from config import settings
 
 
-# =============================================================================
-# CLASS CẤU HÌNH PHÁT HIỆN CHÁY
-# =============================================================================
-# Class này chứa các ngưỡng (threshold) để phát hiện lửa
-# Ngưỡng = giá trị dùng để so sánh, quyết định "có" hay "không"
-# =============================================================================
+# Class cấu hình ngưỡng phát hiện cháy
 class FireConfig:
     
     def __init__(self):
@@ -56,11 +39,7 @@ class FireConfig:
     
 
 
-# =============================================================================
-# CLASS BỘ LỌC PHÁT HIỆN CHÁY
-# =============================================================================
-# Class này lọc bớt các phát hiện sai (false positive)
-# Ví dụ: đèn đỏ, áo cam, TV có hình lửa -> không phải cháy thật
+# Bộ lọc giảm False Positive (đèn, áo cam, v.v.)
 class FireFilter:
     
     # Dùng config mặc định nếu không truyền vào
@@ -74,11 +53,7 @@ class FireFilter:
         # Chế độ debug: in ra lý do loại bỏ
         self.debug = True
     
-    # Kiểm tra xem vùng được phát hiện có phải lửa thật không
-    # frame: Hình ảnh gốc
-    # bbox: Tọa độ vùng nghi ngờ (x1, y1, x2, y2)
-    # is_ir: Camera hồng ngoại hay không
-    # Trả về: True nếu là lửa thật, False nếu không
+    # Kiểm tra vùng phát hiện
     def validate(self, frame, bbox, is_ir=False):
         # Cắt vùng cần kiểm tra
         roi = self.get_roi(frame, bbox)
@@ -91,7 +66,7 @@ class FireFilter:
         else:
             return self.validate_rgb(roi, bbox)
     
-    # Cắt vùng ROI (Region of Interest) từ frame
+    # Cắt vùng khung vực cần check từ frame
     def get_roi(self, frame, bbox):
         # Làm tròn tọa độ
         x1, y1, x2, y2 = map(int, bbox)
@@ -114,7 +89,7 @@ class FireFilter:
     # Lửa thật có đặc điểm:
     # - Màu cam/đỏ/vàng (Hue thấp trong HSV)
     # - Độ bão hòa cao
-    # - Kết cấu phức tạp (không đồng đều như đèn LED)
+    # - Kết cấu phức tạp (không đồng đều như đèn)
     def validate_rgb(self, roi, bbox):
         cfg = self.config
         
@@ -124,33 +99,30 @@ class FireFilter:
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV).astype(np.float32)
         h, s, v = cv2.split(hsv)  # Tách 3 kênh
         
-        # ----- Bước 2: Loại bỏ phản chiếu (reflection) -----
-        # Phản chiếu: sáng + ít màu = (v > 220) và (s < 40)
+        # 2. Bỏ qua vùng phản chiếu (sáng chói + ít màu)
         reflection_mask = (v > 220) & (s < 40)
         reflection_ratio = np.mean(reflection_mask)
         
         if reflection_ratio > 0.3:
             return self.fail("reflection")  # Quá nhiều phản chiếu -> không phải lửa
         
-        # ----- Bước 3: Kiểm tra màu sắc -----
-        # Lửa có màu cam/đỏ: Hue từ 0-50 hoặc 160-180 (Mở rộng range để bắt vàng nhiều hơn)
+        # 3. Check màu (Hue): Cam/Đỏ/Vàng
         fire_hue_mask = ((h >= 0) & (h <= 50)) | ((h >= 160) & (h <= 180))
         valid_hue_ratio = np.mean(fire_hue_mask)
         
         if valid_hue_ratio < 0.1:
             return self.fail(f"hue ({valid_hue_ratio:.2f}<0.1)")  # Không đủ pixel màu lửa
         
-        # ----- Bước 4: Kiểm tra độ bão hòa -----
+        # 4. Kiểm tra độ bão hòa
         if np.mean(s) < 15:
             return self.fail(f"saturation ({np.mean(s):.1f}<15)")  # Màu quá nhạt
         
-        # ----- Bước 5: Kiểm tra độ sáng -----
+        # 5. Check độ sáng
         if np.max(v) < 120:
             return self.fail("too_dark")  # Quá tối
         
-        # ----- Bước 6: Kiểm tra kết cấu (texture) -----
-        # Dùng Entropy để đo độ phức tạp
-        # Lửa có kết cấu phức tạp, đèn LED đồng đều
+        # 6. Check texture (Entropy)
+        # Lửa có kết cấu phức tạp, LED thì đồng đều
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY)
         
         # Tính histogram (phân bố độ sáng)
@@ -163,12 +135,10 @@ class FireFilter:
         if entropy < self.config.rgb_entropy_min:
             return self.fail(f"texture ({entropy:.2f}<{self.config.rgb_entropy_min})")  # Kết cấu quá đơn giản
         
-        # Qua tất cả bước kiểm tra -> Là lửa thật!
+        # Qua tất cả bước kiểm tra : Là lửa thật!
         return True
     
-    # Kiểm tra với camera hồng ngoại
-    # Camera IR chỉ có độ sáng, không có màu
-    # Lửa trong IR: sáng, không đều, nhấp nháy
+    # Validate cho camera IR (hồng ngoại)
     def validate_ir(self, roi, bbox):
         cfg = self.config
         
@@ -180,7 +150,7 @@ class FireFilter:
             return self.fail("brightness")
         
         # ----- Kiểm tra độ biến thiên -----
-        # Lửa không đồng đều -> độ lệch chuẩn cao
+        # Lửa không đồng đều : độ lệch chuẩn cao
         if np.std(gray) < cfg.ir_brightness_std_min:
             return self.fail("variation")
         
@@ -208,7 +178,7 @@ class FireFilter:
                 
                 # Độ bất quy tắc = 1 - độ tròn
                 if (1.0 - circ) < cfg.ir_irregularity_min:
-                    return self.fail("shape")  # Quá tròn -> đèn
+                    return self.fail("shape")  # Quá tròn : đèn
         
         # ----- Kiểm tra nhấp nháy -----
         if not self.check_flicker(gray.astype(np.uint8), bbox, cfg.ir_flicker_min):
@@ -216,8 +186,7 @@ class FireFilter:
         
         return True
     
-    # Kiểm tra độ nhấp nháy theo thời gian
-    # Lửa thật nhấp nháy, đèn LED không
+    # Check nhấp nháy (flicker) theo thời gian
     def check_flicker(self, gray, bbox, threshold):
         # Tạo key dựa trên vị trí (chia ô để gộp các vị trí gần nhau)
         key = f"{bbox[0]//20}_{bbox[1]//20}"
@@ -235,7 +204,7 @@ class FireFilter:
             return True  # Chấp nhận tạm
         
         # Tính độ lệch chuẩn của độ sáng qua các frame
-        # Lửa nhấp nháy -> độ lệch chuẩn cao
+        # Lửa nhấp nháy : độ lệch chuẩn cao
         return np.std(list(hist)) > threshold
     
     # In lý do thất bại (nếu đang debug)
@@ -252,11 +221,7 @@ class FireFilter:
                 del self.history[k]
 
 
-# =============================================================================
-# CLASS CHÍNH: FireDetector
-# =============================================================================
-# Class này sử dụng YOLO để phát hiện lửa/khói
-# YOLO = You Only Look Once - Mạng neural nhận diện vật thể nhanh
+# Class FireDetector: Dùng YOLO detect lửa/khói
 class FireDetector:
     
     def __init__(self, debug=False):
@@ -267,47 +232,39 @@ class FireDetector:
         # Xử lý mỗi N frame để giảm tải CPU/GPU
         self.skip_interval = settings.get('camera.process_every_n_frames', 3)
     
-    # Khởi tạo model phát hiện cháy
-    # Trả về: True nếu thành công, False nếu thất bại
+    # Init model YOLO
     def initialize(self):
         # Kiểm tra đã cài YOLO chưa
         if not YOLO:
             print("⚠️ Thư viện ultralytics chưa được cài đặt!")
             return False
         
-        try:
-            # Lấy cấu hình từ settings
-            yolo_size = settings.get('models.mode', 'Medium').lower()
-            yolo_format = settings.get('models.yolo_format', 'openvino')
-            
-            # Lấy đường dẫn model
-            model_path = settings.get_yolo_model_path('fire', yolo_size, yolo_format)
-            
-            # Kiểm tra file model tồn tại
-            if not model_path.exists():
-                print(f"⚠️ Không tìm thấy model phát hiện cháy: {model_path}")
-                return False
-            
-            # Tải model
-            print(f"🔥 Đang tải model phát hiện cháy: {model_path}")
-            self.model = YOLO(str(model_path), task='detect', verbose=False)
-            print(f"✅ Model phát hiện cháy đã sẵn sàng!")
-            
-            # Chạy thử với ảnh giả để "khởi động" model (OpenVINO cần)
-            if yolo_format == 'openvino':
-                dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
-                self.model(dummy_frame, verbose=False)
-            
-            return True
-            
-        except Exception as e:
-            print(f"❌ Lỗi khởi tạo phát hiện cháy: {e}")
+        # Lấy cấu hình từ settings
+        yolo_size = settings.get('models.mode', 'Medium').lower()
+        yolo_format = settings.get('models.yolo_format', 'openvino')
+        
+        # Lấy đường dẫn model
+        model_path = settings.get_yolo_model_path('fire', yolo_size, yolo_format)
+        
+        # Kiểm tra file model tồn tại
+        if not model_path.exists():
+            print(f"⚠️ Không tìm thấy model phát hiện cháy: {model_path}")
             return False
+        
+        # Tải model
+        print(f"🔥 Đang tải model phát hiện cháy: {model_path}")
+        self.model = YOLO(str(model_path), task='detect', verbose=False)
+        print(f"✅ Model phát hiện cháy đã sẵn sàng!")
+        
+        # Chạy thử với ảnh giả để "khởi động" model (OpenVINO cần)
+        if yolo_format == 'openvino':
+            dummy_frame = np.zeros((640, 640, 3), dtype=np.uint8)
+            self.model(dummy_frame, verbose=False)
+        
+        return True
     
-    # Phát hiện lửa/khói trong frame
-    # frame: Hình ảnh cần kiểm tra
-    # skip: Có bỏ qua một số frame để giảm tải không
-    # Trả về: Danh sách các vùng phát hiện được
+    # Detect lửa/khói
+    # Return: list các vùng phát hiện
     def detect(self, frame, skip=True):
         # Kiểm tra model đã tải chưa
         if not self.model:
@@ -321,60 +278,55 @@ class FireDetector:
         
         yolo_format = settings.get('models.yolo_format', 'openvino')
         
-        try:
-            # Chạy model YOLO
-            if yolo_format == 'openvino':
-                results = self.model(frame, verbose=False)
-            else:
-                results = self.model(frame, verbose=False, device='cpu')
+        # Chạy model YOLO
+        if yolo_format == 'openvino':
+            results = self.model(frame, verbose=False)
+        else:
+            results = self.model(frame, verbose=False, device='cpu')
+        
+        detections = []  # Danh sách kết quả
+        
+        # Xử lý kết quả từ YOLO
+        if results and hasattr(results[0], 'boxes'):
+            h, w = frame.shape[:2]
+            total_area = w * h
             
-            detections = []  # Danh sách kết quả
-            
-            # Xử lý kết quả từ YOLO
-            if results and hasattr(results[0], 'boxes'):
-                h, w = frame.shape[:2]
-                total_area = w * h
+            for box in results[0].boxes:
+                # Lấy độ tin cậy (0.0 - 1.0)
+                conf = float(box.conf[0])
                 
-                for box in results[0].boxes:
-                    # Lấy độ tin cậy (0.0 - 1.0)
-                    conf = float(box.conf[0])
-                    
-                    # Lấy tên class (fire, flame, smoke)
-                    cls = results[0].names.get(int(box.cls[0]), '').lower()
-                    
-                    # Chỉ quan tâm fire, flame, smoke
-                    if cls not in ('fire', 'flame', 'smoke'):
-                        continue
-                    
-                    # Lấy ngưỡng tin cậy từ config
-                    if cls == 'smoke':
-                        threshold = settings.get('detection.smoke_confidence_threshold', 0.7)
-                    else:
-                        threshold = settings.get('detection.fire_confidence_threshold', 0.6)
-                    
-                    # Bỏ qua nếu độ tin cậy thấp
-                    if conf < threshold:
-                        continue
-                    
-                    # Lấy tọa độ bounding box
-                    x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
-                    
-                    # Tính diện tích tương đối
-                    area = (x2 - x1) * (y2 - y1) / total_area
-                    
-                    # Thêm vào kết quả
-                    detections.append({
-                        'bbox': (x1, y1, x2, y2),
-                        'class': cls,
-                        'conf': conf,
-                        'area': area
-                    })
-            
-            return detections
-            
-        except Exception as e:
-            print(f"⚠️ Lỗi phát hiện cháy: {e}")
-            return []
+                # Lấy tên class (fire, flame, smoke)
+                cls = results[0].names.get(int(box.cls[0]), '').lower()
+                
+                # Chỉ quan tâm fire, flame, smoke
+                if cls not in ('fire', 'flame', 'smoke'):
+                    continue
+                
+                # Lấy ngưỡng tin cậy từ config
+                if cls == 'smoke':
+                    threshold = settings.get('detection.smoke_confidence_threshold', 0.7)
+                else:
+                    threshold = settings.get('detection.fire_confidence_threshold', 0.6)
+                
+                # Bỏ qua nếu độ tin cậy thấp
+                if conf < threshold:
+                    continue
+                
+                # Lấy tọa độ bounding box
+                x1, y1, x2, y2 = map(int, box.xyxy[0].tolist())
+                
+                # Tính diện tích tương đối
+                area = (x2 - x1) * (y2 - y1) / total_area
+                
+                # Thêm vào kết quả
+                detections.append({
+                    'bbox': (x1, y1, x2, y2),
+                    'class': cls,
+                    'conf': conf,
+                    'area': area
+                })
+        
+        return detections
     
     # Kiểm tra vùng phát hiện có phải lửa thật không
     def validate(self, frame, bbox, is_ir=False):

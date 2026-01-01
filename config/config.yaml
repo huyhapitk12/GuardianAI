@@ -77,13 +77,14 @@ fire_logic:
     min_age_for_warning: 10
     min_stability_for_warning: 0.8
   red_alert_area_threshold: 0.05
-  red_alert_growth_threshold: 1.3
+  red_alert_growth_threshold: 1.5
   red_alert_growth_window: 10
   window_seconds: 15
   yellow_alert_frames: 8
 models:
   device: cpu
   mode: Small
+  pose_backend: onnxruntime
   yolo_format: openvino
 paths:
   alarm_sound: Data/Audio/alarm.mp3

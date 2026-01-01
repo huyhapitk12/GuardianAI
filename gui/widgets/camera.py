@@ -264,11 +264,8 @@ class CameraList(ctk.CTkFrame):
     
     # Cập nhật trạng thái tất cả camera
     def update_status(self):
-        try:
-            for card in self.cards.values():
-                card.update_status()
-        except Exception as e:
-            print(f"Status update error: {e}")
+        for card in self.cards.values():
+            card.update_status()
         
         self.after(2000, self.update_status)
     

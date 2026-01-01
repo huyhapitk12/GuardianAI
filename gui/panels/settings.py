@@ -132,10 +132,6 @@ class SettingsPanel(ctk.CTkFrame):
             else:
                 page.grid_forget()
     
-    # =========================================================================
-    # PAGE BUILDERS
-    # =========================================================================
-    
     # Trang cài đặt nhận diện
     def build_detection_page(self):
         page = ctk.CTkScrollableFrame(self.content, fg_color="transparent")
@@ -442,10 +438,6 @@ class SettingsPanel(ctk.CTkFrame):
         
         return page
     
-    # =========================================================================
-    # HELPER METHODS
-    # =========================================================================
-    
     # Thêm tiêu đề trang
     def add_header(self, parent, title, subtitle):
         frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -640,10 +632,6 @@ class SettingsPanel(ctk.CTkFrame):
         
         self.setting_vars[key] = {"widget": entry, "type": "path"}
     
-    # =========================================================================
-    # ACTIONS
-    # =========================================================================
-    
     # Tải các giá trị cài đặt hiện tại
     def load_current_settings(self):
         for key, data in self.setting_vars.items():
@@ -704,8 +692,7 @@ class SettingsPanel(ctk.CTkFrame):
                 icon="check"
             )
             
-            print("✅ Settings saved")
-            print("ℹ️ [SYSTEM] Configuration updated")
+            print("Cài đặt đã được cập nhật")
             
         except Exception as e:
             CTkMessagebox(

@@ -10,7 +10,7 @@ from config import settings
 from utils import security
 
 
-# Ghi video
+# Class ghi hình video
 class Recorder:
     
     def __init__(self):
@@ -20,12 +20,12 @@ class Recorder:
         self.fps = settings.recorder.fps
         
         self.fourcc = cv2.VideoWriter.fourcc(*settings.recorder.fourcc)
-        print("khoi tao recorder xong")
+        print("✅ Khởi tạo recorder xong")
 
 
-    # Bắt đầu ghi video
+    # Bắt đầu session ghi
     def start(self, source_id, reason="alert", duration=None, wait_for_user=False):
-        print("bat dau ghi video...")
+        print("Bắt đầu ghi video...")
         print(source_id)
         
         duration = duration or settings.recorder.duration
@@ -54,7 +54,7 @@ class Recorder:
             
             return self.dang_ghi
     
-    # Ghi frame vào file
+    # Ghi frame
     def write(self, frame):
         with self.lock:
             if self.dang_ghi is None:
@@ -79,7 +79,7 @@ class Recorder:
             self.dang_ghi['writer'].write(frame)
             return True
 
-    # Check xem xong chưa để lưu
+    # Kiểm tra đã xong chưa
     def check_finalize(self):
         with self.lock:
             if self.dang_ghi is None:
@@ -96,7 +96,7 @@ class Recorder:
             print("xong video")
             return self.finalize()
     
-    # Lưu và mã hóa
+    # Kết thúc và mã hóa file
     def finalize(self):
         rec = self.dang_ghi
         self.dang_ghi = None
@@ -116,7 +116,7 @@ class Recorder:
         }
 
 
-    # Dừng ghi
+    # Dừng ghi (force stop)
     def stop(self):
         print("stop ghi")
         with self.lock:
@@ -124,7 +124,7 @@ class Recorder:
                 self.dang_ghi['end_time'] = time.time()
                 self.dang_ghi['wait_for_user'] = False
     
-    # Hủy ghi
+    # Hủy bỏ (xóa file)
     def discard(self):
         print("huy bo video")
         with self.lock:
@@ -140,14 +140,14 @@ class Recorder:
             self.dang_ghi = None
             return True
     
-    # Gia hạn thời gian ghi
+    # Gia hạn thời gian
     def extend(self, seconds):
         print(f"gia han them {seconds}s")
         with self.lock:
             if self.dang_ghi:
                 self.dang_ghi['end_time'] += seconds
     
-    # Chờ user phản hồi
+    # Dừng chờ user
     def resolve_user_wait(self):
         print("user da phan hoi")
         with self.lock:

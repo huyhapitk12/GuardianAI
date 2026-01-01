@@ -113,35 +113,29 @@ class CamerasPanel(ctk.CTkFrame):
             self.after(1000, self.update_video)
             return
         
-        try:
-            ret, frame = cam.read()
+        ret, frame = cam.read()
+        
+        if ret and frame is not None:
+            # Resize with high-quality interpolation
+            target_w, target_h = Sizes.VIDEO_WIDTH, Sizes.VIDEO_HEIGHT
+            frame_resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
             
-            if ret and frame is not None:
-                # Resize with high-quality interpolation
-                target_w, target_h = Sizes.VIDEO_WIDTH, Sizes.VIDEO_HEIGHT
-                frame_resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
-                
-                # Convert
-                frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
-                pil_img = Image.fromarray(frame_rgb)
-                
-                # Brightness
-                if self.brightness != 1.0:
-                    pil_img = ImageEnhance.Brightness(pil_img).enhance(self.brightness)
-                
-                ctk_img = CTkImage(pil_img, size=(target_w, target_h))
-                
-                if self.video_label.winfo_exists():
-                    self.video_label.configure(text="", image=ctk_img)
-                    self.video_label.image = ctk_img
-            else:
-                if self.video_label.winfo_exists():
-                    self.video_label.configure(text="🔄 Reconnecting...", image=None)
-                    
-        except Exception as e:
-            print(f"Video error: {e}")
+            # Convert
+            frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
+            pil_img = Image.fromarray(frame_rgb)
+            
+            # Brightness
+            if self.brightness != 1.0:
+                pil_img = ImageEnhance.Brightness(pil_img).enhance(self.brightness)
+            
+            ctk_img = CTkImage(pil_img, size=(target_w, target_h))
+            
             if self.video_label.winfo_exists():
-                self.video_label.configure(text="❌ Feed error", image=None)
+                self.video_label.configure(text="", image=ctk_img)
+                self.video_label.image = ctk_img
+        else:
+            if self.video_label.winfo_exists():
+                self.video_label.configure(text="🔄 Reconnecting...", image=None)
         
         # Schedule next update
         refresh_rate = 33 if self.state.is_detection_enabled() else 50

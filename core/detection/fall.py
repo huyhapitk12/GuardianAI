@@ -1,7 +1,4 @@
-# core/detection/fall.py
-# =============================================================================
-# PHÁT HIỆN TÉ NGÃ (FALL DETECTION)
-# =============================================================================
+# Module phát hiện té ngã (RTMPose + ONNX)
 import numpy as np
 from collections import deque
 import cv2
@@ -28,7 +25,7 @@ SKELETON_COLOR = (0, 255, 255)    # Vàng cho bones
 KEYPOINT_COLOR = (0, 255, 0)      # Xanh lá cho keypoints
 FALL_SKELETON_COLOR = (0, 0, 255)  # Đỏ khi fall detected
 
-# Vẽ xương lên frame
+# Hàm vẽ xương lên frame (debug)
 def draw_skeleton(frame, kps_normalized, is_fall=False):
     h, w = frame.shape[:2]
     
@@ -59,7 +56,7 @@ def draw_skeleton(frame, kps_normalized, is_fall=False):
     return frame
 
 
-# Chuẩn hóa keypoints giúp không bị ảnh hưởng bởi vị trí hay kích thước của người
+# Chuẩn hóa keypoints (vị trí tương đối so với hông)
 def normalize_keypoints(keypoints_T_17_2):
     hip_center = (keypoints_T_17_2[:, 11] + keypoints_T_17_2[:, 12]) / 2.0  # Tâm hông = trung bình hông trái và hông phải
     normalized = keypoints_T_17_2 - hip_center[:, None, :]  # Tính khoảng cách từ tâm hông (Đặt trục tại tâm hông)
@@ -75,7 +72,7 @@ def normalize_keypoints(keypoints_T_17_2):
     return normalized
 
 
-# Tính đặc trưng từ keypoints: vị trí vs vận tốc
+# Feature extraction: Location + Velocity
 def compute_features(keypoints_T_17_2):
     T = keypoints_T_17_2.shape[0] # Số frame
     pos = keypoints_T_17_2.reshape(T, -1)  # Trải phẳng thành một hàng vs len = 34 * T
@@ -87,7 +84,7 @@ def compute_features(keypoints_T_17_2):
     return feats
 
 
-# Padding hoặc truncate về số segment cố định
+# Resize/Pad vector tính năng
 def to_num_segments(features_T_D, num_segments):
     T = features_T_D.shape[0]
     
@@ -103,11 +100,6 @@ def to_num_segments(features_T_D, num_segments):
     
     return features_T_D
 
-
-# =============================================================================
-# ONNX HELPERS
-# =============================================================================
-
 def sigmoid(x):
     return 1.0 / (1.0 + np.exp(-x))
 
@@ -120,14 +112,7 @@ def topk_mean_np(logits_T, ratio):
     return float(np.mean(topk))
 
 
-# =============================================================================
-# FALL ONNX MODEL
-# =============================================================================
-
-# Wrapper cho model ONNX phát hiện té ngã
-# Hỗ trợ 2 kiểu output:
-# - Kiểu A: Output là fall_prob (B,) hoặc (B,1) -> dùng luôn
-# - Kiểu B: Output là segment_logits (B,T) -> cần topk_mean + sigmoid
+# Wrapper cho model ONNX
 class FallONNX:
     
     def __init__(self, onnx_path):
@@ -147,7 +132,7 @@ class FallONNX:
         self.out_name = self.sess.get_outputs()[0].name
         self.topk_ratio = 0.2  # Top-K ratio cho segment logits
     
-    # Dự đoán xác suất té ngã
+    # Predict probability
     def predict_prob(self, x_1_T_D):
         x_1_T_D = np.asarray(x_1_T_D, dtype=np.float32)
         out = self.sess.run([self.out_name], {self.in_name: x_1_T_D})[0]
@@ -168,11 +153,7 @@ class FallONNX:
         raise RuntimeError(f"Không nhận dạng được output shape của ONNX: {out.shape}")
 
 
-# =============================================================================
 # POSE EXTRACTOR (RTMPose)
-# =============================================================================
-
-# Trích xuất pose từ frame sử dụng RTMPose (rtmlib)
 class PoseExtractor:
     
     def __init__(self, confidence_threshold=0.5, mode='balanced', device='cpu', backend='onnxruntime'):
@@ -180,7 +161,7 @@ class PoseExtractor:
         
         # Body model sử dụng RTMPose
         # Mode: 'lightweight' (Small - nhanh), 'balanced' (Medium), 'performance' (Large - chính xác)
-        # to_openpose=False -> output COCO 17 keypoints
+        # to_openpose=False : output COCO 17 keypoints
         self.body = Body(
             to_openpose=False,  
             mode=mode,
@@ -191,7 +172,7 @@ class PoseExtractor:
         self.pose_model = self.body.pose_model
         self.img_shape = None
     
-    # Trích xuất 17 keypoints từ frame với bbox có sẵn (tối ưu - không chạy YOLOX)
+    # Extract keypoints dùng bbox có sẵn (Nhanh)
     def extract_with_bbox(self, frame_bgr, bbox):
         h, w = frame_bgr.shape[:2]
         self.img_shape = (h, w)
@@ -217,7 +198,7 @@ class PoseExtractor:
         avg_conf = float(np.mean(confs))
         return kps_normalized, avg_conf
     
-    # Trích xuất 17 keypoints từ frame (tự detect người bằng YOLOX)
+    # Extract keypoints full frame (Chậm hơn, tự detect)
     def extract_17xy(self, frame_bgr):
         h, w = frame_bgr.shape[:2]
         self.img_shape = (h, w)
@@ -243,17 +224,7 @@ class PoseExtractor:
         pass
 
 
-# =============================================================================
-# FALL DETECTOR - CLASS CHÍNH
-# =============================================================================
-
-# Phát hiện té ngã cho hệ thống GuardianAI
-# Cách dùng:
-# 1. Khởi tạo: detector = FallDetector()
-# 2. Mỗi frame: detector.update(frame)
-# 3. Kiểm tra: is_fall, prob = detector.check_fall()
-# 4. Vẽ skeleton: detector.draw_skeleton(frame)
-# 5. Khi xong: detector.close()
+# Class FallDetector chính
 class FallDetector:
     
     def __init__(self):
@@ -277,8 +248,9 @@ class FallDetector:
         # Đọc config model
         model_mode = settings.get('models.mode', 'Medium')
         device = settings.get('models.device', 'cpu')
+        pose_backend = settings.get('models.pose_backend', 'onnxruntime')
         
-        # Mapping Small/Medium -> lightweight/balanced
+        # Mapping Small/Medium : lightweight/balanced
         mode_map = {
             'Small': 'lightweight',
             'Medium': 'balanced'
@@ -286,24 +258,20 @@ class FallDetector:
         self.pose_mode = mode_map.get(model_mode, 'balanced')
 
         # Khởi tạo model
-        try:
-            from pathlib import Path
-            full_path = Path(settings.base_dir) / model_path
-            self.model = FallONNX(str(full_path))
-            print(f"✅ Đã tải model Fall Detection: {model_path}")
-        except Exception as e:
-            print(f"❌ Lỗi tải model Fall Detection: {e}")
-            self.model = None
-            self.enabled = False
-            return
+        from pathlib import Path
+        full_path = Path(settings.base_dir) / model_path
+        self.model = FallONNX(str(full_path))
+        print(f"✅ Đã tải model Fall Detection: {model_path}")
         
+        # Khởi tạo pose extractor (RTMPose)
         # Khởi tạo pose extractor (RTMPose)
         self.pose_extractor = PoseExtractor(
             confidence_threshold=self.pose_confidence,
             mode=self.pose_mode,
-            device=device
+            device=device,
+            backend=pose_backend
         )
-        print(f"📐 RTMPose mode: {self.pose_mode} ({model_mode}) | Device: {device}")
+        print(f"📐 RTMPose mode: {self.pose_mode} ({model_mode}) | Device: {device} | Backend: {pose_backend}")
         
         # Buffer lưu keypoints
         self.buffer = deque(maxlen=self.window_size)
@@ -316,9 +284,7 @@ class FallDetector:
         self.last_prob = None
         self.is_fall_detected = False
     
-    # Cập nhật với frame mới
-    # frame: Frame BGR từ OpenCV  
-    # bbox: Bounding box (x1,y1,x2,y2) từ person detector (tùy chọn - tối ưu hiệu năng)
+    # Cập nhật frame mới
     def update(self, frame, bbox=None):
         if not self.enabled or self.model is None:
             return
@@ -327,10 +293,10 @@ class FallDetector:
         
         # Trích xuất pose
         if bbox is not None:
-            # Có bbox từ person detector -> dùng trực tiếp, bỏ qua YOLOX (nhanh hơn)
+            # Có bbox từ person detector : dùng trực tiếp, bỏ qua YOLOX (nhanh hơn)
             kps, conf = self.pose_extractor.extract_with_bbox(frame, bbox)
         else:
-            # Không có bbox -> phải tự detect bằng YOLOX (chậm hơn)
+            # Không có bbox : phải tự detect bằng YOLOX (chậm hơn)
             kps, conf = self.pose_extractor.extract_17xy(frame)
         
         if kps is not None and conf > self.pose_confidence:
@@ -341,57 +307,50 @@ class FallDetector:
             self.miss_count += 1
             
             if self.miss_count > self.miss_threshold:
-                # Mất track quá lâu -> Reset
+                # Mất track quá lâu : Reset
                 self.buffer.clear()
                 self.last_kps = None
                 self.hit_run = 0
                 self.last_prob = None
                 self.is_fall_detected = False
             elif self.last_kps is not None:
-                # Mới mất track -> dùng keypoints cũ
+                # Mới mất track : dùng keypoints cũ
                 self.buffer.append(self.last_kps)
         
         # Chỉ infer theo stride
         if len(self.buffer) == self.window_size and (self.frame_count % self.stride == 0):
             self._run_inference()
     
-    # Chạy inference với buffer hiện tại
+    # Chạy inference
     def _run_inference(self):
-        try:
-            # Chuẩn bị features
-            win_kps = np.stack(self.buffer, axis=0)  # (30, 17, 2)
-            win_norm = normalize_keypoints(win_kps)  # (30, 17, 2)
-            feats = compute_features(win_norm)       # (30, 68)
-            feats = to_num_segments(feats, self.num_segments)  # (30, 68)
-            
-            # Inference
-            x = feats[None, :, :]  # (1, 30, 68)
-            prob = self.model.predict_prob(x)
-            self.last_prob = prob
-            
-            # Kiểm tra ngưỡng
-            if prob >= self.threshold:
-                self.hit_run += 1
-            else:
-                self.hit_run = 0
-            
-            # Cập nhật trạng thái
-            self.is_fall_detected = (self.hit_run >= self.n_consecutive)
-            
-        except Exception as e:
-            print(f"Lỗi fall inference: {e}")
+        # Chuẩn bị features
+        win_kps = np.stack(self.buffer, axis=0)  # (30, 17, 2)
+        win_norm = normalize_keypoints(win_kps)  # (30, 17, 2)
+        feats = compute_features(win_norm)       # (30, 68)
+        feats = to_num_segments(feats, self.num_segments)  # (30, 68)
+        
+        # Inference
+        x = feats[None, :, :]  # (1, 30, 68)
+        prob = self.model.predict_prob(x)
+        self.last_prob = prob
+        
+        # Kiểm tra ngưỡng
+        if prob >= self.threshold:
+            self.hit_run += 1
+        else:
+            self.hit_run = 0
+        
+        # Cập nhật trạng thái
+        self.is_fall_detected = (self.hit_run >= self.n_consecutive)
     
-    # Kiểm tra trạng thái té ngã hiện tại
-    # return: (is_fall: bool, probability: float)
+    # Check kết quả (True/False, prob)
     def check_fall(self):
         if not self.enabled:
             return False, 0.0
         
         return self.is_fall_detected, self.last_prob or 0.0
     
-    # Vẽ skeleton lên frame
-    # frame: Frame BGR từ OpenCV
-    # return: Frame đã vẽ skeleton
+    # Vẽ overlay lên frame
     def draw_skeleton_overlay(self, frame):
         if not self.enabled or self.last_kps is None:
             return frame

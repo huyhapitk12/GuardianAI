@@ -8,8 +8,6 @@ from config import settings
 
 # Xử lý mã hóa/giải mã file
 class SecurityManager:
-    
-    
     def __init__(self):
         self._key_file = settings.base_dir / 'secret.key'
         self._key = self._load_or_create_key()
@@ -29,7 +27,7 @@ class SecurityManager:
     def decrypt(self, data):
         return self._cipher.decrypt(data)
     
-    # Mã hóa file tại chỗ (ghi đè file gốc)
+    # Mã hóa file (ghi đè)
     def encrypt_file(self, path):
         path = Path(path)
         if not path.exists():
@@ -38,36 +36,25 @@ class SecurityManager:
         data = path.read_bytes()
         path.write_bytes(self.encrypt(data))
     
-    # Giải mã file và trả về bytes
+    # Giải mã file -> bytes
     def decrypt_file(self, path):
-        try:
-            return self.decrypt(Path(path).read_bytes())
-        except Exception:
-            return None
+        return self.decrypt(Path(path).read_bytes())
     
     # Lưu ảnh có mã hóa
     def save_image(self, path, image):
-        try:
-            _, encoded = cv2.imencode('.jpg', image)
-            encrypted = self.encrypt(encoded.tobytes())
-            Path(path).write_bytes(encrypted)
-            return True
-        except Exception:
-            return False
+        _, encoded = cv2.imencode('.jpg', image)
+        encrypted = self.encrypt(encoded.tobytes())
+        Path(path).write_bytes(encrypted)
+        return True
     
     # Tải và giải mã ảnh
     def load_image(self, path):
-        try:
-            decrypted = self.decrypt_file(path)
-            if decrypted:
-                arr = np.frombuffer(decrypted, np.uint8)
-                return cv2.imdecode(arr, cv2.IMREAD_COLOR)
-            
-            # Fallback to unencrypted
-            return cv2.imread(str(path))
-        except Exception:
-            return None
+        decrypted = self.decrypt_file(path)
+        if decrypted:
+            arr = np.frombuffer(decrypted, np.uint8)
+            return cv2.imdecode(arr, cv2.IMREAD_COLOR)
+        
+        return cv2.imread(str(path))
 
 
-# Biến toàn cục
 security = SecurityManager()

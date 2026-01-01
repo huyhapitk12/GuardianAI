@@ -20,7 +20,7 @@ class Alert:
         self.resolution = resolution
 
 
-# Thread-safe state management
+# Quản lý trạng thái luồng an toàn
 class StateManager:
     def __init__(self):
         self._lock = threading.RLock()
@@ -31,7 +31,7 @@ class StateManager:
         self._alert_counter = 0
         self._unresolved = set()
     
-    # State management
+    # Quản lý state
     def set(self, key, value):
         with self._lock:
             self._states[key] = value
@@ -40,7 +40,7 @@ class StateManager:
         with self._lock:
             return self._states.get(key, default)
     
-    # Detection control
+    # Điều khiển detection
     def is_detection_enabled(self, source_id=None):
         with self._lock:
             if source_id is None:
@@ -56,12 +56,13 @@ class StateManager:
     
     # Aliases for compatibility
     def is_person_detection_enabled(self, source_id=None):
+    # Tương thích ngược
         return self.is_detection_enabled(source_id)
     
     def set_person_detection_enabled(self, enabled, source_id=None):
         self.set_detection(enabled, source_id)
     
-    # Alert management
+    # Quản lý alert
     def create_alert(self, alert_type, source_id=None,
                      chat_id=None, image_path=None,
                      name=None):
@@ -107,10 +108,8 @@ class StateManager:
             return key in self._unresolved
 
 
-# Prevent alert spam
+# Ngăn chặn spam alert
 class SpamGuard:
-    
-    
     def __init__(self):
         self._lock = threading.Lock()
         self._last_alert = {}

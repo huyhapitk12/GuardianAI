@@ -14,25 +14,11 @@ from urllib3.util.retry import Retry
 from config import settings, ActionCode
 from utils import security, state_manager
 
-# Optional telegram imports
-try:
-    from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-    from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
-    TELEGRAM_AVAILABLE = True
-except ImportError:
-    TELEGRAM_AVAILABLE = False
-    Update = None
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
+from openai import AsyncOpenAI  
 
-# Optional OpenAI
-try:
-    from openai import AsyncOpenAI
-    OPENAI_AVAILABLE = True
-except ImportError:
-    AsyncOpenAI = None
-    OPENAI_AVAILABLE = False
-
-
-# Create session with retry
+# Tạo session với retry logic
 def get_session():
     session = requests.Session()
     retry = Retry(total=3, backoff_factor=1, status_forcelist=[429, 500, 502, 503, 504])
@@ -40,75 +26,66 @@ def get_session():
     return session
 
 
-# Send photo via Telegram API
+# Gửi ảnh qua Telegram API
 def send_photo(chat_id, photo_path, caption="", 
                reply_markup=None, silent=False):
     for _ in range(3):
-        try:
-            url = f"https://api.telegram.org/bot{settings.telegram.token}/sendPhoto"
-            
-            # Try decrypt
-            data = security.decrypt_file(photo_path)
-            if data:
-                files = {'photo': ('image.jpg', data)}
-            else:
-                files = {'photo': open(photo_path, 'rb')}
-            
-            payload = {
-                'chat_id': chat_id,
-                'caption': caption,
-                'disable_notification': silent,
-            }
-            if reply_markup:
-                payload['reply_markup'] = json.dumps(reply_markup)
-            
-            response = get_session().post(url, files=files, data=payload, timeout=30)
-            
-            if not isinstance(files['photo'], tuple):
-                files['photo'].close()
-            
-            if response.status_code == 200:
-                return True
-                
-        except Exception as e:
-            print(f"Send photo error: {e}")
+        url = f"https://api.telegram.org/bot{settings.telegram.token}/sendPhoto"
+        
+        # Try decrypt
+        data = security.decrypt_file(photo_path)
+        if data:
+            files = {'photo': ('image.jpg', data)}
+        else:
+            files = {'photo': open(photo_path, 'rb')}
+        
+        payload = {
+            'chat_id': chat_id,
+            'caption': caption,
+            'disable_notification': silent,
+        }
+        if reply_markup:
+            payload['reply_markup'] = json.dumps(reply_markup)
+        
+        response = get_session().post(url, files=files, data=payload, timeout=30)
+        
+        if not isinstance(files['photo'], tuple):
+            files['photo'].close()
+        
+        if response.status_code == 200:
+            return True
         
         time.sleep(2)
     
     return False
 
 
-# Send video via Telegram API
+# Gửi video qua Telegram API
 def send_video(chat_id, video_path, caption=""):
-    try:
-        from pathlib import Path
-        path = Path(video_path)
-        
-        if not path.exists():
-            return False
-        
-        size_mb = path.stat().st_size / (1024 * 1024)
-        endpoint = "sendVideo" if size_mb < 50 else "sendDocument"
-        
-        url = f"https://api.telegram.org/bot{settings.telegram.token}/{endpoint}"
-        
-        data = security.decrypt_file(video_path)
-        if data:
-            files = {'video' if endpoint == 'sendVideo' else 'document': ('video.mp4', data)}
-        else:
-            files = {'video' if endpoint == 'sendVideo' else 'document': open(video_path, 'rb')}
-        
-        payload = {'chat_id': chat_id, 'caption': caption}
-        response = get_session().post(url, files=files, data=payload, timeout=60)
-        
-        return response.status_code == 200
-        
-    except Exception as e:
-        print(f"Send video error: {e}")
+    from pathlib import Path
+    path = Path(video_path)
+    
+    if not path.exists():
         return False
+    
+    size_mb = path.stat().st_size / (1024 * 1024)
+    endpoint = "sendVideo" if size_mb < 50 else "sendDocument"
+    
+    url = f"https://api.telegram.org/bot{settings.telegram.token}/{endpoint}"
+    
+    data = security.decrypt_file(video_path)
+    if data:
+        files = {'video' if endpoint == 'sendVideo' else 'document': ('video.mp4', data)}
+    else:
+        files = {'video' if endpoint == 'sendVideo' else 'document': open(video_path, 'rb')}
+    
+    payload = {'chat_id': chat_id, 'caption': caption}
+    response = get_session().post(url, files=files, data=payload, timeout=60)
+    
+    return response.status_code == 200
 
 
-# AI-powered chat assistant
+# AI Chat Assistant
 class AIAssistant:
     
     
@@ -121,27 +98,21 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         self.client = None
         self.history = {}
         
-        if self.enabled and OPENAI_AVAILABLE and AsyncOpenAI:
-            try:
-                self.client = AsyncOpenAI(
-                    base_url=settings.ai.api_base,
-                    api_key=settings.ai.api_key,
-                    timeout=settings.telegram.httpx_timeout
-                )
-            except Exception:
-                self.enabled = False
+        if self.enabled and AsyncOpenAI:
+            self.client = AsyncOpenAI(
+                base_url=settings.ai.api_base,
+                api_key=settings.ai.api_key,
+                timeout=settings.telegram.httpx_timeout
+            )
     
-    # Process message and return (reply, action)
+    # Xử lý tin nhắn -> (reply, action)
     async def process(self, chat_id, message):
         if not self.enabled or not self.client:
             return self.simple_response(message), None
         
-        try:
-            return await self.llm_response(chat_id, message)
-        except Exception as e:
-            return f"Lỗi: {e}", None
+        return await self.llm_response(chat_id, message)
     
-    # Simple keyword-based response
+    # Trả lời keyword đơn giản
     def simple_response(self, message):
         msg = message.lower()
         
@@ -156,7 +127,7 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         
         return "AI không khả dụng."
     
-    # LLM-based response
+    # Trả lời bằng LLM (OpenAI)
     async def llm_response(self, chat_id, message):
         history = self.history.get(chat_id, [])
         
@@ -189,7 +160,7 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         
         return reply, action
     
-    # Add system context to history
+    # Thêm thông tin vào ngữ cảnh
     def add_context(self, chat_id, message):
         if chat_id not in self.history:
             self.history[chat_id] = []
@@ -200,11 +171,8 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         self.history.pop(chat_id, None)
 
 
-# Create inline keyboard for alerts
+# Tạo bàn phím tùy chọn (nút bấm)
 def create_alert_keyboard(alert_id, is_fire=False):
-    if not TELEGRAM_AVAILABLE:
-        return None
-    
     if is_fire:
         keyboard = [
             [InlineKeyboardButton("✅ Cháy thật", callback_data=f"fire_real:{alert_id}"),
@@ -220,7 +188,7 @@ def create_alert_keyboard(alert_id, is_fire=False):
     return InlineKeyboardMarkup(keyboard)
 
 
-# Telegram bot for Guardian system
+# Guardian Bot class
 class GuardianBot:
     
     
@@ -234,14 +202,14 @@ class GuardianBot:
         self.quit = False
         self.app = None
         
-        if not TELEGRAM_AVAILABLE:
-            print("⚠️ Telegram not available")
+        try:
+            self.app = Application.builder().token(settings.telegram.token).build()
+        except:
+            print("Thêm token vào config")
             return
-        
-        self.app = Application.builder().token(settings.telegram.token).build()
         self.setup_handlers()
     
-    # Setup command handlers
+    # Đăng ký các lệnh
     def setup_handlers(self):
         handlers = [
             CommandHandler("start", self.cmd_start),
@@ -301,20 +269,17 @@ class GuardianBot:
             await update.message.reply_text(reply)
     
     async def execute_action(self, action, chat_id):
-        try:
-            code = ActionCode[action]
-            if code == ActionCode.TOGGLE_ON:
-                state_manager.set_detection(True)
-            elif code == ActionCode.TOGGLE_OFF:
-                state_manager.set_detection(False)
-            elif code == ActionCode.GET_IMAGE:
-                self.snapshot_fn(chat_id)
-            elif code == ActionCode.ALARM_ON and self.alarm:
-                self.alarm.play()
-            elif code == ActionCode.ALARM_OFF and self.alarm:
-                self.alarm.stop()
-        except Exception:
-            pass
+        code = ActionCode[action]
+        if code == ActionCode.TOGGLE_ON:
+            state_manager.set_detection(True)
+        elif code == ActionCode.TOGGLE_OFF:
+            state_manager.set_detection(False)
+        elif code == ActionCode.GET_IMAGE:
+            self.snapshot_fn(chat_id)
+        elif code == ActionCode.ALARM_ON and self.alarm:
+            self.alarm.play()
+        elif code == ActionCode.ALARM_OFF and self.alarm:
+            self.alarm.stop()
     
     async def on_callback(self, update, context):
         query = update.callback_query
@@ -351,11 +316,9 @@ class GuardianBot:
         
         await query.edit_message_caption(caption=caption)
     
-    # Schedule alert to be sent
+    # Lên lịch gửi cảnh báo
     def schedule_alert(self, chat_id, image_path, caption, 
                        alert_id, is_fire=False, silent=False):
-        if not TELEGRAM_AVAILABLE:
-            return
         
         kb = create_alert_keyboard(alert_id, is_fire)
         markup = kb.to_dict() if kb else None
@@ -365,10 +328,8 @@ class GuardianBot:
             daemon=True
         ).start()
     
-    # Send heartbeat message
+    # Gửi tin nhắn định kì
     def send_heartbeat(self):
-        if not TELEGRAM_AVAILABLE:
-            return
         
         status = "🟢" if state_manager.is_detection_enabled() else "🔴"
         text = f"❤️ Guardian hoạt động\nPhát hiện: {status}"
@@ -380,15 +341,12 @@ class GuardianBot:
         ).start()
     
     def send_text(self, chat_id, text):
-        try:
-            url = f"https://api.telegram.org/bot{settings.telegram.token}/sendMessage"
-            get_session().post(url, data={'chat_id': chat_id, 'text': text}, timeout=10)
-        except Exception:
-            pass
+        url = f"https://api.telegram.org/bot{settings.telegram.token}/sendMessage"
+        get_session().post(url, data={'chat_id': chat_id, 'text': text}, timeout=10)
     
     # Run bot
     def run(self):
-        if not TELEGRAM_AVAILABLE or not self.app:
+        if not self.app:
             return
         
         loop = asyncio.new_event_loop()

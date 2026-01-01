@@ -3,16 +3,16 @@ import os
 import pickle
 import cv2
 import numpy as np
+import contextlib
 from pathlib import Path
 
-# from insightface.app import FaceAnalysis
 from insightface.app import FaceAnalysis
 from insightface.model_zoo import get_model
 
 from config import settings
 
 
-# Class này để nhận diện người quen
+# Class nhận diện người quen (FaceRec)
 class FaceDetector:
     
     def __init__(self):
@@ -23,41 +23,36 @@ class FaceDetector:
         self.rec_path = None
         print("face detector init")
     
-    # khởi tạo model
+    # Khởi tạo model InsightFace
     def initialize(self):
-        try:
-            # Đọc config
-            mode = settings.get('models.mode', 'Small')
-            device = settings.get('models.device', 'cpu')
-            
-            # Xác định provider dựa trên device
-            if device.lower() == 'gpu':
-                providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
-            else:
-                providers = ['CPUExecutionProvider']
-            
-            # tìm model
-            model_dir = settings.paths.model_dir
-            det_path = self.find_model(model_dir / mode, "detect")
-            rec_path = self.find_model(model_dir / mode, "recog")
-            
-            if not det_path or not rec_path:
-                print("khong thay model face")
-                return False
-            
-            # tạo app
-            self.app = self.create_app(det_path, rec_path, providers)
-            
-            self.app.prepare(ctx_id=0, det_size=(640, 640))
-            
-            print(f"init face model: {mode} | device: {device}")
-            return True
-            
-        except Exception as e:
-            print(f"loi init face: {e}")
+        # Đọc config
+        mode = settings.get('models.mode', 'Small')
+        device = settings.get('models.device', 'cpu')
+        
+        # Xác định provider dựa trên device
+        if device.lower() == 'gpu':
+            providers = ['CUDAExecutionProvider', 'CPUExecutionProvider']
+        else:
+            providers = ['CPUExecutionProvider']
+        
+        # tìm model
+        model_dir = settings.paths.model_dir
+        det_path = self.find_model(model_dir / mode, "detect")
+        rec_path = self.find_model(model_dir / mode, "recog")
+        
+        if not det_path or not rec_path:
+            print("khong thay model face")
             return False
+        
+        # tạo app
+        self.app = self.create_app(det_path, rec_path, providers)
+        
+        self.app.prepare(ctx_id=0, det_size=(640, 640))
+        
+        print(f"init face model: {mode} | device: {device}")
+        return True
     
-    # hàm tìm file
+    # Tìm model file trong thư mục
     def find_model(self, directory, keyword):
         if not directory.exists():
             return None
@@ -67,13 +62,17 @@ class FaceDetector:
                 return f
         return None
     
-    # tạo app từ class con
+    # Tạo app InsightFace
     def create_app(self, det_path, rec_path, providers):
         class CustomFaceAnalysis(FaceAnalysis):
             def __init__(self, det, rec, prov):
                 self.models = {}
-                self.models['detection'] = get_model(str(det), providers=prov)
-                self.models['recognition'] = get_model(str(rec), providers=prov)
+                # Tắt log khó chịu của onnxruntime
+                with open(os.devnull, 'w') as fnull:
+                    with contextlib.redirect_stdout(fnull), contextlib.redirect_stderr(fnull):
+                        self.models['detection'] = get_model(str(det), providers=prov)
+                        self.models['recognition'] = get_model(str(rec), providers=prov)
+                
                 self.det_model = self.models['detection']
             
             def prepare(self, ctx_id, det_size):
@@ -86,65 +85,57 @@ class FaceDetector:
         
         return CustomFaceAnalysis(det_path, rec_path, providers)
     
-    # load data mặt đã học
+    # Load database khuôn mặt đã học
     def load_known_faces(self):
-        try:
-            emb_file = settings.paths.data_dir / "known_embeddings.pkl"
-            names_file = settings.paths.data_dir / "known_names.pkl"
-            
-            if not emb_file.exists() or not names_file.exists():
-                return False
-            
-            with open(emb_file, 'rb') as f:
-                self.embeddings = pickle.load(f)
-            with open(names_file, 'rb') as f:
-                self.names = pickle.load(f)
-            
-            print(f"load dc {len(self.names)} nguoi")
-            return True
-        except Exception:
+        emb_file = settings.paths.data_dir / "known_embeddings.pkl"
+        names_file = settings.paths.data_dir / "known_names.pkl"
+        
+        if not emb_file.exists() or not names_file.exists():
             return False
+        
+        with open(emb_file, 'rb') as f:
+            self.embeddings = pickle.load(f)
+        with open(names_file, 'rb') as f:
+            self.names = pickle.load(f)
+        
+        print(f"load dc {len(self.names)} nguoi")
+        return True
     
-    # tìm mặt
+    # Detect khuôn mặt trong ảnh
     def detect_faces(self, image):
         if not self.app:
             return []
         
         return self.app.get(image)
     
-    # check xem là ai
+    # So sánh embedding để nhận diện
     def recognize(self, embedding):
         if not self.embeddings:
             return None, float('inf')
         
-        try:
-            emb = np.array(embedding, dtype=np.float32)
-            known = np.array(self.embeddings, dtype=np.float32)
-            
-            # chuẩn hóa
-            emb_norm = emb / np.linalg.norm(emb)
-            known_norm = known / np.linalg.norm(known, axis=1, keepdims=True)
-            
-            # tính cosin
-            distances = 1 - np.dot(known_norm, emb_norm)
-            
-            idx = np.argmin(distances)
-            dist = float(distances[idx])
-            
-            threshold = settings.detection.face_recognition_threshold
-            
-            if dist <= threshold:
-                print(f"nhan ra: {self.names[idx]} ({dist:.2f})")
-                return self.names[idx], dist
-            
-            # print("khong biet la ai")
-            return None, dist
-            
-        except Exception as e:
-            print(e)
-            return None, float('inf')
+        emb = np.array(embedding, dtype=np.float32)
+        known = np.array(self.embeddings, dtype=np.float32)
+        
+        # chuẩn hóa
+        emb_norm = emb / np.linalg.norm(emb)
+        known_norm = known / np.linalg.norm(known, axis=1, keepdims=True)
+        
+        # tính cosin
+        distances = 1 - np.dot(known_norm, emb_norm)
+        
+        idx = np.argmin(distances)
+        dist = float(distances[idx])
+        
+        threshold = settings.detection.face_recognition_threshold
+        
+        if dist <= threshold:
+            print(f"nhan ra: {self.names[idx]} ({dist:.2f})")
+            return self.names[idx], dist
+        
+        # print("khong biet la ai")
+        return None, dist
     
-    # học lại mặt
+    # Học lại khuôn mặt từ thư mục ảnh
     def rebuild_embeddings(self):
         from utils import security
         
@@ -164,30 +155,24 @@ class FaceDetector:
                 if img_file.suffix.lower() not in ('.jpg', '.png', '.jpeg'):
                     continue
                 
-                try:
-                    img = security.load_image(img_file)
-                    if img is None:
-                        img = cv2.imread(str(img_file))
-                    if img is None:
-                        continue
-                    
-                    faces = self.detect_faces(img)
-                    if faces:
-                        embeddings.append(faces[0].embedding)
-                        names.append(person_dir.name)
-                        print(f"hoc: {person_dir.name}")
-                except Exception as e:
-                    print(f"loi: {e}")
+                img = security.load_image(img_file)
+                if img is None:
+                    img = cv2.imread(str(img_file))
+                if img is None:
+                    continue
+                
+                faces = self.detect_faces(img)
+                if faces:
+                    embeddings.append(faces[0].embedding)
+                    names.append(person_dir.name)
+                    print(f"Learn: {person_dir.name}")
         
-        try:
-            with open(settings.paths.data_dir / "known_embeddings.pkl", 'wb') as f:
-                pickle.dump(embeddings, f)
-            with open(settings.paths.data_dir / "known_names.pkl", 'wb') as f:
-                pickle.dump(names, f)
-            
-            self.embeddings = embeddings
-            self.names = names
-            print("hoc xong")
-            return len(names)
-        except Exception:
-            return 0
+        with open(settings.paths.data_dir / "known_embeddings.pkl", 'wb') as f:
+            pickle.dump(embeddings, f)
+        with open(settings.paths.data_dir / "known_names.pkl", 'wb') as f:
+            pickle.dump(names, f)
+        
+        self.embeddings = embeddings
+        self.names = names
+        print("✅ Hoàn tất học lại khuôn mặt")
+        return len(names)

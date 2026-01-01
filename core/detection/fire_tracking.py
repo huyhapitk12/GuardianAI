@@ -1,4 +1,4 @@
-# Theo dõi lửa
+# Fire Tracking Logic
 import time
 import numpy as np
 from collections import deque
@@ -6,7 +6,7 @@ from config import settings
 
 
 class TrackedFireObject:
-    # Class này lưu thông tin một đám cháy
+    # Thông tin đám cháy đang theo dõi
     def __init__(self, id, bbox, area, first_seen, last_seen):
         self.id = id
         self.bbox = bbox
@@ -18,7 +18,7 @@ class TrackedFireObject:
         self.matched_count = 0
     
     def update(self, bbox, area, now):
-        # Update vị trí mới
+        # Cập nhật vị trí & tính ổn định
         self.bbox = bbox
         self.area = area
         self.last_seen = now
@@ -31,7 +31,7 @@ class TrackedFireObject:
 
 
 class RedAlertMode:
-    # Quản lý chế độ báo động đỏ
+    # Quản lý trạng thái Báo động Đỏ (Red Alert)
     
     def __init__(self):
         self.active = False
@@ -40,14 +40,14 @@ class RedAlertMode:
         # print("init red alert")
     
     def activate(self, now):
-        # Kích hoạt
+        # Kích hoạt báo động
         if not self.active:
             print(f"BAO DONG DO!!! - Lockdown {self.lockdown_duration}s")
         self.active = True
         self.until = now + self.lockdown_duration
     
     def is_active(self, now):
-        # Kiểm tra xem có đang active không
+        # Kiểm tra trạng thái active
         if self.active and now > self.until:
             print("Het bao dong do")
             self.active = False
@@ -60,8 +60,8 @@ class RedAlertMode:
         self.until = 0.0
 
 
+# Theo dõi & phân tích đám cháy
 class FireTracker:
-    # Class theo dõi lửa
     
     def __init__(self):
         self.objects = {}
@@ -86,8 +86,7 @@ class FireTracker:
         print("khoi tao fire tracker")
     
     def update(self, detections, now):
-        # Hàm update chính
-        # print("updating fire tracker...")
+        # Cập nhật state & check alerts
         
         # Update objects
         self.match_and_update(detections, now)
@@ -117,7 +116,7 @@ class FireTracker:
         return should_alert, is_yellow, is_red
     
     def match_and_update(self, detections, now):
-        # Match detection với object cũ bằng IOU
+        # Match detections với objects bằng IOU Matching
         if not detections:
             return
         
@@ -155,7 +154,7 @@ class FireTracker:
                 self.next_id += 1
     
     def cleanup(self, now):
-        # Xóa object cũ
+        # Xóa các object cũ/hết hạn
         max_age = self.config['max_age']
         
         # Dùng dict comprehension
@@ -165,7 +164,7 @@ class FireTracker:
         }
     
     def check_red_alert(self, detections, now):
-        # Check xem có cần báo động đỏ không
+        # Logic báo động đỏ (Cháy to / Lan nhanh / Nhiều điểm cháy)
         
         # Check if already in Red Alert
         if self.red_alert.is_active(now):
@@ -203,7 +202,7 @@ class FireTracker:
         return False
     
     def check_fire_growth(self):
-        # Check xem lửa có lớn nhanh không
+        # Phân tích tốc độ lan của lửa
         if len(self.recent_detections) < 5:
             return False
         
@@ -230,7 +229,7 @@ class FireTracker:
             self.current_growth_rate = rate
             
             if rate > threshold:
-                print(f"tang truong nhanh: {avg_past:.4f} -> {avg_current:.4f} (x{rate:.2f})")
+                print(f"tang truong nhanh: {avg_past:.4f} : {avg_current:.4f} (x{rate:.2f})")
                 return True
         else:
              self.current_growth_rate = 0.0
@@ -239,7 +238,7 @@ class FireTracker:
     
     
     def calc_iou(self, box1, box2):
-        # Tính IOU
+        # Tính IOU score
         x1, y1, x2, y2 = box1
         x1_, y1_, x2_, y2_ = box2
         

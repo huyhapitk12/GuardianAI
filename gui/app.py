@@ -1,4 +1,4 @@
-# Ứng dụng GUI chính
+# Main GUI Application
 
 import threading
 from typing import Optional
@@ -13,7 +13,7 @@ from gui.panels import CamerasPanel, PersonsPanel, SettingsPanel
 from gui.widgets.gallery import GalleryPanel
 
 
-# Cửa sổ chính của ứng dụng
+# Cấu hình cửa sổ chính
 class GuardianApp:
     
     
@@ -32,7 +32,7 @@ class GuardianApp:
         log_system("GUI initialized", "success")
         log_activity("Guardian started", "success")
     
-    # Cấu hình cửa sổ
+    # Cấu hình Window
     def setup_window(self):
         set_appearance_mode("dark")
         
@@ -44,7 +44,7 @@ class GuardianApp:
         self.root.grid_columnconfigure(0, weight=1)
         self.root.grid_rowconfigure(0, weight=1)
     
-    # Xây dựng giao diện chính
+    # Xây dựng giao diện
     def build_ui(self):
         # Main container
         container = ctk.CTkFrame(self.root, fg_color=Colors.BG_PRIMARY)
@@ -91,7 +91,7 @@ class GuardianApp:
         )
         self.panels['settings'].pack(fill="both", expand=True)
     
-    # Xử lý khi chuyển tab
+    # Xử lý chuyển tab
     def on_tab_change(self):
         selected = self.tabs.get()
         
@@ -110,13 +110,13 @@ class GuardianApp:
         
         log_activity(f"Switched to {self.current_tab}", "info")
     
-    # Dọn dẹp khi tắt
+    # Cleanup khi đóng
     def shutdown(self):
         if 'cameras' in self.panels:
             self.panels['cameras'].stop()
 
 
-# Chạy ứng dụng giao diện
+# Hàm chạy GUI loop
 def run_gui(camera_manager, face_detector, state_manager, main_app=None):
     root = ctk.CTk()
     app = GuardianApp(root, camera_manager, face_detector, state_manager)

@@ -1,14 +1,19 @@
 # main.py
 import os
+import warnings
+
+warnings.filterwarnings("ignore", message=".*pkg_resources is deprecated.*")
+os.environ['PYGAME_HIDE_SUPPORT_PROMPT'] = "1"
+
 import time
 import queue
 import uuid
 import threading
 
-# Tắt thông báo của YOLO
+# Tắt YOLO log
 os.environ['YOLO_VERBOSE'] = 'False'
 
-# Import các module của dự án
+# Import module
 from config import settings, AlertType, AlertPriority
 from core import CameraManager, Recorder, FaceDetector, FireDetector
 from utils import state_manager, spam_guard, security, init_alarm, play_alarm, stop_alarm, memory_monitor, task_pool
@@ -16,110 +21,84 @@ from bot import GuardianBot, AIAssistant, send_photo, send_video
 from gui import run_gui
 
 
-# Class điều khiển hệ thống
+# Controller hệ thống
 class GuardianApp:
     
     def __init__(self):
         
-        # Quản lý trạng thái hệ thống (bật/tắt camera, cảnh báo,...)
-        self.state = state_manager
-        
-        # Chống spam tin nhắn
-        self.spam_guard = spam_guard
-        
-        # Quay video
-        self.recorder = Recorder()
-        
-        # Hàng đợi chờ phản hồi
-        self.response_queue = queue.Queue()
-        
-        # Báo thread tắt chương trình
+        self.state = state_manager              # State Mgr
+        self.spam_guard = spam_guard            # Anti-spam
+        self.recorder = Recorder()              # Video Recorder
+        self.response_queue = queue.Queue()     # Response Queue
         self.shutdown_event = threading.Event()
-        
-        # Danh sách các thread
         self.threads = []
-        
-        # Trạng thái còi
         self.is_alarm_playing = False
     
-    # Hàm này chạy khởi tạo hệ thống
+    # Khởi tạo hệ thống
     def initialize(self):
-        print("🚀 Bắt đầu khởi tạo hệ thống...")
-        
         # Theo dõi RAM
         memory_monitor.start()
         
-        # Khởi tạo còi báo động
+        # Init Alarm
         if not init_alarm():
-            print("⚠️ Còi báo động không chạy được!")
+            print("⚠️ Còi báo động lỗi!")
             return False
         
-        # Khởi tạo nhận diện khuôn mặt
-        print("📷 Đang tải bộ nhận diện khuôn mặt...")
+        # Init Face Detector
         self.face_detector = FaceDetector()
         
         if not self.face_detector.initialize():
-            print("❌ Bộ nhận diện khuôn mặt không chạy được!")
+            print("❌ Face Detector lỗi!")
             return False
-        
-        # Tải danh sách face đã biết
+            
         self.face_detector.load_known_faces()
+        print("✅ Face Detector đã sẵn sàng!")
         
-        # Khởi tạo phát hiện cháy
-        print("🔥 Đang tải bộ phát hiện cháy...")
+        # Init Fire Detector
         self.fire_detector = FireDetector()
         
         if not self.fire_detector.initialize():
-            print("❌ Bộ phát hiện cháy không chạy được!")
+            print("❌ Fire Detector lỗi!")
             return False
+
+        print("✅ Fire Detector đã sẵn sàng!")
         
-        # Khởi tạo camera
-        print("📹 Đang kết nối camera...")
-        try:
-            # Quản lý camera
-            self.camera_manager = CameraManager(
-                person_alert=self.person_alert,
-                fire_alert=self.fire_alert,
-                fall_alert=self.fall_alert
-            )
-            
-            # Chạy camera
-            self.camera_manager.start(
-                self.fire_detector,
-                self.face_detector,
-                self.state
-            )
-        except Exception as e:
-            print(f"❌ Lỗi camera: {e}")
-            return False
+        # Init Camera Manager
+        self.camera_manager = CameraManager(
+            person_alert=self.person_alert,
+            fire_alert=self.fire_alert,
+            fall_alert=self.fall_alert
+        )
         
-        # Khởi tạo AI Assistant
+        self.camera_manager.start(
+            self.fire_detector,
+            self.face_detector,
+            self.state
+        )
+        print("✅ Camera Manager đã sẵn sàng!")
+        
+        # Init AI & Bot
         self.ai_assistant = AIAssistant()
         
-        # Khởi tạo Telegram Bot
-        try:
-            self.bot = GuardianBot(
-                self.ai_assistant,
-                self,
-                self.get_snapshot,
-                self.camera_manager,
-                self.response_queue
-            )
-            print("✅ Telegram Bot đã sẵn sàng!")
-        except Exception as e:
-            print(f"⚠️ Telegram Bot không chạy được: {e}")
-            self.bot = None
+        self.bot = GuardianBot(
+            self.ai_assistant,
+            self,
+            self.get_snapshot,
+            self.camera_manager,
+            self.response_queue
+        )
+        print("✅ Telegram Bot đã sẵn sàng!")
         
         print("✅ KHỞI TẠO HOÀN TẤT!")
         return True
     
-    # XỬ LÝ CẢNH BÁO NGƯỜI
-    def person_alert(self, source_id, frame, alert_type, metadata): # source_id: ID camera, frame: Hình ảnh, alert_type: Loại cảnh báo, metadata: Thông tin thêm
+    # Xử lý cảnh báo người
+    def person_alert(self, source_id, frame, alert_type, metadata):
         # Check phải là dictionary
         if not isinstance(metadata, dict):
             metadata = {}
         
-        # Tạo key cho cảnh báo chống spam
+        # Tạo key anti-spam
         if alert_type == AlertType.KNOWN_PERSON:
             key = (alert_type, metadata.get('name'), source_id) # Tạo key cho người quen
         else:
@@ -160,23 +139,22 @@ class GuardianApp:
         if self.ai_assistant:
             self.ai_assistant.add_context(settings.telegram.chat_id, caption)
         
-        # Bắt đầu quay video
+        # Ghi video & chờ phản hồi
         self.start_recording(source_id, alert_id)
         
-        # Chạy thread chờ phản hồi người dùng
         threading.Thread(
             target=self.watch_response,
             args=(alert_id,),
             daemon=True
         ).start()
     
-    # XỬ LÝ CẢNH BÁO CHÁY
-    def fire_alert(self, source_id, frame, alert_type): # source_id: ID camera, frame: Hình ảnh, alert_type: Loại cảnh báo
+    # Xử lý cảnh báo cháy
+    def fire_alert(self, source_id, frame, alert_type):
         # Check có phải cảnh báo khẩn cấp        
         critical = (alert_type == AlertType.FIRE_CRITICAL)
         key = (alert_type, source_id)
         
-        # Check chống spam (ưu tiên cảnh báo khẩn cấp)
+        # Anti-spam (Critical ưu tiên cao)
         if not self.spam_guard.allow(key, critical):
             return
         
@@ -223,7 +201,7 @@ class GuardianApp:
                 daemon=True
             ).start()
     
-    # XỬ LÝ CẢNH BÁO TÉ NGÃ
+    # Xử lý té ngã
     def fall_alert(self, source_id, frame, alert_type):
         key = (alert_type, source_id)
         
@@ -263,18 +241,18 @@ class GuardianApp:
         # Bắt đầu quay video
         self.start_recording(source_id, alert_id)
     
-    # CÁC HÀM HỖ TRỢ
+    # Các hàm hỗ trợ
     
-    # Xác định độ ưu tiên cảnh báo
-    def get_priority(self, alert_type, metadata): # alert_type: Loại cảnh báo, metadata: Thông tin cảnh báo
+    # Xác định mức độ ưu tiên
+    def get_priority(self, alert_type, metadata):
         if alert_type in [AlertType.FIRE_CRITICAL, AlertType.FIRE_WARNING]:
             return AlertPriority.CRITICAL  # Cao nhất
         if alert_type == AlertType.STRANGER:
             return AlertPriority.MEDIUM    # Trung bình
         return AlertPriority.LOW           # Thấp
     
-    # Tạo nội dung tin nhắn cảnh báo
-    def get_caption(self, alert_type, source_id, metadata, priority): # alert_type: Loại cảnh báo, source_id: ID camera, metadata: Thông tin cảnh báo, priority: Độ ưu tiên
+    # Tạo nội dung tin nhắn
+    def get_caption(self, alert_type, source_id, metadata, priority):
         if priority == AlertPriority.CRITICAL:
             return f"🚨🔥 KHẨN CẤP - Có cháy tại camera {source_id}!"
         elif priority == AlertPriority.MEDIUM:
@@ -283,27 +261,23 @@ class GuardianApp:
             name = metadata.get('name', 'Ai đó')
             return f"👋 {name} đang ở camera {source_id}"
     
-    # Quay video khi có cảnh báo
-    def start_recording(self, source_id, alert_id): # source_id: ID camera, alert_id: ID cảnh báo
-        try:
-            # Get thời gian quay từ config
-            duration = settings.get('recorder.duration_seconds', 30)
-            
-            rec = self.recorder.start(
-                source_id=source_id,
-                reason="alert",
-                duration=duration
-            )
-            
-            # Add ID cảnh báo vào list
-            if rec:
-                rec['alert_ids'].append(alert_id)
-                
-        except Exception as e:
-            print(f"Lỗi quay video: {e}")
+    # Quay video
+    def start_recording(self, source_id, alert_id):
+        # Get thời gian quay từ config
+        duration = settings.get('recorder.duration_seconds', 30)
+        
+        rec = self.recorder.start(
+            source_id=source_id,
+            reason="alert",
+            duration=duration
+        )
+        
+        # Add ID cảnh báo vào list
+        if rec:
+            rec['alert_ids'].append(alert_id)
     
-    # Chờ phản hồi người dùng
-    def watch_response(self, alert_id): # alert_id: ID cảnh báo
+    # Chờ user phản hồi
+    def watch_response(self, alert_id):
         # Get thời gian chờ từ config
         timeout = settings.telegram.user_response_window_seconds
         start = time.time()
@@ -319,8 +293,7 @@ class GuardianApp:
                     # Nếu người dùng nói không sao thì hủy video
                     if resp.get('decision') in ('yes', 'left'):
                         self.recorder.discard()
-                    return
-                    
+                    return 
             except queue.Empty:
                 # Không có phản hồi, tiếp tục chờ
                 continue
@@ -373,49 +346,45 @@ class GuardianApp:
             daemon=True
         ).start()
     
-    # Ghi video khi cần
+    # Loop ghi video
     def recorder_loop(self):
         while not self.shutdown_event.is_set():
-            try:
-                # Kiểm tra có đang ghi video không
-                if self.recorder.dang_ghi and self.camera_manager:
-                    source_id = self.recorder.dang_ghi.get('source_id')
-                    cam = self.camera_manager.get_camera(source_id) if source_id else None
+            # Kiểm tra có đang ghi video không
+            if self.recorder.dang_ghi and self.camera_manager:
+                source_id = self.recorder.dang_ghi.get('source_id')
+                cam = self.camera_manager.get_camera(source_id) if source_id else None
+                
+                if cam:
+                    # Đọc frame và ghi vào video
+                    ret, frame = cam.read_raw()
+                    if ret and frame is not None:
+                        self.recorder.write(frame)
                     
-                    if cam:
-                        # Đọc frame và ghi vào video
-                        ret, frame = cam.read_raw()
-                        if ret and frame is not None:
-                            self.recorder.write(frame)
-                        
-                        # Kiểm tra xem có cần kéo dài thời gian ghi không
-                        end_time = self.recorder.dang_ghi.get('end_time', 0)
-                        now = time.time()
-                        
-                        if 0 < end_time - now < 5.0:  # Còn dưới 5 giây
-                            if cam.has_active_threat():  # Vẫn còn nguy hiểm
-                                extension = settings.get('recorder.extension_seconds', 10)
-                                self.recorder.extend(extension)
+                    # Kiểm tra xem có cần kéo dài thời gian ghi không
+                    end_time = self.recorder.dang_ghi.get('end_time', 0)
+                    now = time.time()
                     
-                    # Kiểm tra hoàn thành ghi video
-                    result = self.recorder.check_finalize()
-                    if result:
-                        # Gửi video qua Telegram
-                        task_pool.submit(
-                            send_video,
-                            settings.telegram.chat_id,
-                            str(result['path']),
-                            "📹 Video cảnh báo"
-                        )
-                else:
-                    time.sleep(0.5)
-                    
-            except Exception as e:
-                print(f"Lỗi trong vòng lặp ghi video: {e}")
+                    if 0 < end_time - now < 5.0:  # Còn dưới 5 giây
+                        if cam.has_active_threat():  # Vẫn còn nguy hiểm
+                            extension = settings.get('recorder.extension_seconds', 10)
+                            self.recorder.extend(extension)
+                
+                # Kiểm tra hoàn thành ghi video
+                result = self.recorder.check_finalize()
+                if result:
+                    # Gửi video qua Telegram
+                    task_pool.submit(
+                        send_video,
+                        settings.telegram.chat_id,
+                        str(result['path']),
+                        "📹 Video cảnh báo"
+                    )
+            else:
+                time.sleep(0.5)
             
             time.sleep(0.1)
     
-    # Kiểm tra hệ thống còn sống
+    # System heartbeat
     def life_loop(self):
         interval = 300  # 5 phút
         last_beat = 0
@@ -439,7 +408,7 @@ class GuardianApp:
         stop_alarm()
         self.is_alarm_playing = False
     
-    # Chạy chương trình chính
+    # Main run loop
     def run(self):
         # Khởi tạo hệ thống
         if not self.initialize():
@@ -473,27 +442,24 @@ class GuardianApp:
         t.start()
         self.threads.append(t)
         
-        print("=" * 50)
-        print("✅ HỆ THỐNG ĐANG CHẠY!")
-        print("Nhấn Ctrl+C để tắt.")
-        print("=" * 50)
+        print("✅ Hệ thống đang chạy!")
         
         # Xử lý sự kiện nhấn Ctrl + C
         try:
             while not self.shutdown_event.is_set():
                 time.sleep(1)
         except KeyboardInterrupt:
-            print("\n⚠️ Nhận lệnh tắt từ bàn phím...")
+            pass
         finally:
             self.shutdown()
     
-    # Tắt chương trình
+    # Shutdown system
     def shutdown(self):
         # Tránh gọi nhiều lần
         if self.shutdown_event.is_set():
             return
         
-        print("🛑 Đang tắt hệ thống...")
+        print("Đang tắt hệ thống...")
         
         # Báo hiệu tất cả thread dừng
         self.shutdown_event.set()
@@ -517,10 +483,6 @@ class GuardianApp:
 
 # Bắt đầu chương trình
 def main():
-    print("=" * 60)
-    print("       GUARDIANAI - HỆ THỐNG GIÁM SÁT AN NINH THÔNG MINH")
-    print("=" * 60)
-    
     # Tạo và chạy ứng dụng
     app = GuardianApp()
     app.run()

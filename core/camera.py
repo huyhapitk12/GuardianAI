@@ -1,12 +1,4 @@
-# core/camera.py
-# =============================================================================
-# MODULE XỬ LÝ CAMERA
-# =============================================================================
-# Module này xử lý video từ camera và chạy các bộ phát hiện:
-# - Phát hiện người + nhận diện khuôn mặt
-# - Phát hiện cháy/khói
-# =============================================================================
-
+# Xử lý video từ camera & chạy các bộ phát hiện (người, cháy, khói)
 import cv2
 import time
 import queue
@@ -20,74 +12,62 @@ from core.detection import PersonTracker, FireFilter, FireTracker, FallDetector
 from core.motion_detector import MotionDetector
 
 
-# =============================================================================
-# CLASS CAMERA - XỬ LÝ VIDEO TỪ MỘT CAMERA
-# =============================================================================
+# Class xử lý video từ 1 camera
 class Camera:
     
-    # Khởi tạo camera
-    # source: URL camera, đường dẫn video, hoặc số (webcam ID)
-    # person_alert_callback: Callback khi phát hiện người
-    # fire_alert_callback: Callback khi phát hiện cháy
-    # fall_alert_callback: Callback khi phát hiện té ngã
-    # shared_model: Model YOLO dùng chung (tiết kiệm RAM)
     def __init__(self, source, person_alert_callback=None, fire_alert_callback=None, fall_alert_callback=None, shared_model=None):
         # Nguồn video
         self.source = source
         self.source_id = str(source)
         
-        # Đối tượng VideoCapture của OpenCV
+        # Đối tượng VideoCapture
         self.cap = None
         
         # Cờ báo hiệu tắt
         self.quit = False
         
-        # ----- Quản lý frame -----
-        # Lock để tránh xung đột khi nhiều thread đọc/ghi frame
+        # Quản lý frame và lock
         self.frame_lock = threading.Lock()
-        self.last_frame = None      # Frame đã xử lý (có vẽ box)
-        self.raw_frame = None       # Frame gốc (không vẽ gì)
-        self.frame_idx = 0          # Đếm số frame
+        self.last_frame = None      # Frame đã xử lý
+        self.raw_frame = None       # Frame gốc
+        self.frame_idx = 0
         
-        # ----- Quản lý kết nối -----
         self.reconnect_attempts = 0
         self.last_frame_time = time.time()
         self.ai_active_until = 0    # Thời điểm AI tắt nếu không có chuyển động
         
-        # ----- Phát hiện chế độ IR (hồng ngoại/ban đêm) -----
+        # Chế độ IR
         self.is_ir = False
-        self.ir_history = deque(maxlen=30)  # Lưu lịch sử 30 frame
+        self.ir_history = deque(maxlen=30)  # Lịch sử 30 frame
         self.ir_manual_override = None  # None = auto, True/False = manual
         
-        # ----- Phát hiện cháy -----
+        # Phát hiện cháy
         debug_fire = settings.get('camera.debug_fire_detection', False)
         self.fire_filter = FireFilter(debug=debug_fire)
-        self.fire_boxes = []        # Vị trí các đám cháy
+        self.fire_boxes = []        # Vị trí đám cháy
         self.fire_history = deque(maxlen=150)
         self.fire_tracker = FireTracker()
         
-        # ----- Phát hiện người -----
+        # Phát hiện người
         self.person_tracker = PersonTracker(shared_model=shared_model)
         
-        # ----- Phát hiện chuyển động -----
-        # Dùng để tiết kiệm CPU: không có chuyển động = không cần chạy AI
+        # Phát hiện chuyển động để tiết kiệm CPU
         self.motion_detector = MotionDetector(
             motion_threshold=settings.get('camera.motion_threshold', 25.0),
             min_area=settings.get('camera.motion_min_area', 500)
         )
         
-        # ----- Callback functions -----
+        # Callback cảnh báo
         self.person_alert_callback = person_alert_callback
         self.fire_alert_callback = fire_alert_callback
         self.fall_alert_callback = fall_alert_callback
         
-        # ----- Phát hiện té ngã -----
+        # Phát hiện té ngã
         self.fall_detector = None
         self.is_fall_detected = False
         self.fall_prob = 0.0
         
-        # ----- Queue cho xử lý đa luồng -----
-        # maxsize=2: Tối đa 2 frame trong queue, tránh tồn đọng
+        # Queue xử lý đa luồng
         self.fire_queue = queue.Queue(maxsize=2)
         self.result_queue = queue.Queue(maxsize=16)
         
@@ -100,29 +80,25 @@ class Camera:
         # Kết nối camera
         self.init_capture()
     
-    # Kết nối với camera
+    # Kết nối camera
     def init_capture(self):
-        try:
-            # Nếu là webcam (số), thử nhiều backend
-            if isinstance(self.source, int):
-                backends = self.get_backends()
-                for backend in backends:
-                    self.cap = cv2.VideoCapture(self.source, backend)
-                    if self.cap.isOpened():
-                        break
-            else:
-                # URL hoặc file video
-                self.cap = cv2.VideoCapture(self.source)
-            
-            # Cấu hình camera
-            if self.cap and self.cap.isOpened():
-                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Giảm độ trễ
-                print(f"✅ Camera {self.source_id} đã kết nối!")
-                
-        except Exception as e:
-            print(f"❌ Camera {self.source_id} kết nối thất bại: {e}")
+        # Nếu là webcam (số), thử nhiều backend
+        if isinstance(self.source, int):
+            backends = self.get_backends()
+            for backend in backends:
+                self.cap = cv2.VideoCapture(self.source, backend)
+                if self.cap.isOpened():
+                    break
+        else:
+            # URL hoặc file video
+            self.cap = cv2.VideoCapture(self.source)
+        
+        # Cấu hình camera
+        if self.cap and self.cap.isOpened():
+            self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)  # Giảm độ trễ
+            print(f"✅ Camera {self.source_id} đã kết nối!")
     
-    # Lấy danh sách backend phù hợp với hệ điều hành
+    # Lấy backend video phù hợp OS
     def get_backends(self):
         if platform.system() == 'Windows':
             return [cv2.CAP_MSMF, cv2.CAP_DSHOW, cv2.CAP_ANY]
@@ -130,34 +106,29 @@ class Camera:
             return [cv2.CAP_V4L2, cv2.CAP_ANY]
         return [cv2.CAP_ANY]
     
-    # Đọc frame đã xử lý (có vẽ box, label)
+    # Đọc frame đã xử lý
     def read(self):
         with self.frame_lock:
             if self.last_frame is not None:
                 return True, self.last_frame.copy()
             return False, None
     
-    # Đọc frame gốc (không xử lý)
+    # Đọc frame gốc
     def read_raw(self):
         with self.frame_lock:
             if self.raw_frame is not None:
                 return True, self.raw_frame.copy()
             return False, None
     
-    # Khởi động các worker xử lý
-    # Worker = Thread chạy nền để xử lý từng tác vụ
+    # Khởi động các worker thread
     def start_workers(self, fire_detector, face_detector):
         # Gắn face detector vào person tracker
         self.person_tracker.set_face_detector(face_detector)
         self.person_tracker.initialize()
         
         # Khởi tạo Fall Detector
-        try:
-            self.fall_detector = FallDetector()
-            print(f"✅ Camera {self.source_id}: Fall Detector đã sẵn sàng")
-        except Exception as e:
-            print(f"⚠️ Camera {self.source_id}: Không thể khởi tạo Fall Detector: {e}")
-            self.fall_detector = None
+        self.fall_detector = FallDetector()
+        print(f"✅ Camera {self.source_id}: Fall Detector đã sẵn sàng")
         
         # Thread phát hiện cháy
         threading.Thread(
@@ -166,25 +137,20 @@ class Camera:
             daemon=True
         ).start()
     
-    # Worker phát hiện cháy
-    # Chạy trong thread riêng, lấy frame từ queue và phát hiện
+    # Worker phát hiện cháy (chạy thread riêng)
     def fire_worker(self, detector):
         while not self.quit:
-            try:
-                frame = self.fire_queue.get(timeout=1.0)
+            if not self.fire_queue.empty():
+                frame = self.fire_queue.get()
                 detections = detector.detect(frame)
                 if detections:
                     self.result_queue.put(('fire', detections))
-            except queue.Empty:
-                continue
+            else:
+                time.sleep(0.1)
     
-    # =========================================================================
-    # VÒNG LẶP XỬ LÝ CHÍNH
-    # =========================================================================
     # Vòng lặp chính xử lý video
-    # Chạy liên tục cho đến khi self.quit = True
     def process_loop(self, state_manager):
-        # Tính interval giữa các frame dựa trên FPS mong muốn
+        # Tính interval theo FPS mục tiêu
         interval = 1.0 / settings.camera.target_fps
         last_time = 0
         cleanup_counter = 0
@@ -227,9 +193,7 @@ class Camera:
             # ----- Áp dụng bộ lọc màu -----
             frame = self.apply_color_filter(frame)
             
-            # ----- Resize frame để xử lý -----
-            # Frame nhỏ hơn = xử lý nhanh hơn
-            # [LOGIC] Giữ nguyên tỉ lệ (aspect ratio) để không bị méo
+            # Resize giữ aspect ratio để xử lý nhanh hơn
             proc_w, proc_h = settings.camera.process_size
             h, w = frame.shape[:2]
             
@@ -240,7 +204,7 @@ class Camera:
             
             small = cv2.resize(frame, (new_w, new_h))
             
-            # Tính tỉ lệ scale để chuyển đổi tọa độ (từ nhỏ -> lớn)
+            # Scale factor cho toạ độ
             scale_x = w / new_w
             scale_y = h / new_h
             
@@ -251,17 +215,13 @@ class Camera:
             # ----- Phát hiện chuyển động -----
             has_motion = self.motion_detector.detect(small)
             
-            # ===== LOGIC THÔNG MINH: Tiết kiệm CPU =====
-            # 1. Có chuyển động → Bật AI 5 giây
+            # Logic tiết kiệm CPU: Có chuyển động -> chạy AI 5s
             if has_motion:
                 self.ai_active_until = now + 5.0
             
-            # 2. Chỉ chạy AI khi cần
-            # ----- Kiểm tra toggle chức năng -----
-            # Ưu tiên setting riêng của camera, nếu None thì dùng Global
+            # Chỉ chạy AI khi cần (Face enabled hoặc chuyển động)
             face_enabled = self.face_enabled if self.face_enabled is not None else settings.get('detection.face_recognition_enabled', True)
             
-            # Chỉ chạy AI khi face detection được bật
             should_run_ai = detection_enabled and face_enabled and (
                 now < self.ai_active_until or self.frame_idx < 30
             )
@@ -269,11 +229,9 @@ class Camera:
             if should_run_ai:
                 self.process_persons(small, frame, scale_x, scale_y, face_enabled)
                 
-                # 3. Nếu có người, giữ AI hoạt động (tránh mất track khi đứng yên)
+                # Giữ AI active nếu đang có người
                 if self.person_tracker.has_tracks():
                     self.ai_active_until = now + 5.0
-                    
-                    # 4. Phát hiện té ngã (chỉ khi có người)
                     self.process_fall(frame, scale_x, scale_y)
             
             # ----- Phát hiện cháy (luôn chạy vì quan trọng) -----
@@ -297,88 +255,73 @@ class Camera:
     
     # Xử lý phát hiện và tracking người
     def process_persons(self, small, full, scale_x, scale_y, face_enabled=True):
-        try:
-            # Lấy ngưỡng tin cậy
-            threshold = settings.get('detection.person_confidence_threshold', 0.5)
-            if self.is_ir:
-                # IR mode: ngưỡng thấp hơn vì ảnh khó hơn
-                threshold = settings.get('camera.infrared.person_detection_threshold', 0.45)
-            
-            # Phát hiện người
-            detections = self.person_tracker.detect(small, threshold)
-            
-            # Cập nhật tracking
-            # Skip face check nếu: IR mode HOẶC Face Recognition bị tắt
-            skip_face = self.is_ir or not face_enabled
-            
-            self.person_tracker.update(detections, full, scale_x, scale_y, skip_face_check=skip_face)
-            
-            # Kiểm tra cảnh báo
-            for tid, alert_type, metadata in self.person_tracker.check_alerts():
-                if self.person_alert_callback:
-                    alert_frame = full.copy()
-                    self.draw_overlays(alert_frame, True, scale_x, scale_y)
-                    self.person_alert_callback(self.source_id, alert_frame, alert_type, metadata)
-                    
-        except Exception as e:
-            print(f"Lỗi xử lý người: {e}")
+        # Lấy ngưỡng tin cậy
+        threshold = settings.get('detection.person_confidence_threshold', 0.5)
+        if self.is_ir:
+            # IR mode: ngưỡng thấp hơn vì ảnh khó hơn
+            threshold = settings.get('camera.infrared.person_detection_threshold', 0.45)
+        
+        # Phát hiện người
+        detections = self.person_tracker.detect(small, threshold)
+        
+        # Cập nhật tracking
+        # Skip face check nếu: IR mode HOẶC Face Recognition bị tắt
+        skip_face = self.is_ir or not face_enabled
+        
+        self.person_tracker.update(detections, full, scale_x, scale_y, skip_face_check=skip_face)
+        
+        # Kiểm tra cảnh báo
+        for tid, alert_type, metadata in self.person_tracker.check_alerts():
+            if self.person_alert_callback:
+                alert_frame = full.copy()
+                self.draw_overlays(alert_frame, True, scale_x, scale_y)
+                self.person_alert_callback(self.source_id, alert_frame, alert_type, metadata)
     
-    # Xử lý phát hiện té ngã
-    # Chỉ chạy khi đã phát hiện được người
+    # Xử lý té ngã (khi có người)
     def process_fall(self, frame, scale_x, scale_y):
         if not self.fall_detector:
             return
         
-        try:
-            # Lấy bbox của người đầu tiên từ person tracker (tránh chạy YOLOX lần 2)
-            tracks = self.person_tracker.tracks
-            bbox = None
-            if tracks:
-                first_track = next(iter(tracks.values()))
-                bbox = first_track.bbox  # (x1, y1, x2, y2)
+        # Lấy bbox của người đầu tiên từ person tracker (tránh chạy YOLOX lần 2)
+        tracks = self.person_tracker.tracks
+        bbox = None
+        if tracks:
+            first_track = next(iter(tracks.values()))
+            bbox = first_track.bbox  # (x1, y1, x2, y2)
+        
+        # Cập nhật fall detector với frame và bbox
+        self.fall_detector.update(frame, bbox=bbox)
+        
+        # Kiểm tra trạng thái té ngã
+        is_fall, prob = self.fall_detector.check_fall()
+        self.is_fall_detected = is_fall
+        self.fall_prob = prob
+        
+        # Gửi cảnh báo nếu phát hiện té ngã
+        if is_fall and self.fall_alert_callback:
+            alert_frame = frame.copy()
+            self.draw_overlays(alert_frame, True, scale_x, scale_y)
+            self.fall_alert_callback(self.source_id, alert_frame, AlertType.FALL)
+            print(f"🚨 FALL DETECTED - Camera {self.source_id} (prob={prob:.2f})")
             
-            # Cập nhật fall detector với frame và bbox
-            self.fall_detector.update(frame, bbox=bbox)
-            
-            # Kiểm tra trạng thái té ngã
-            is_fall, prob = self.fall_detector.check_fall()
-            self.is_fall_detected = is_fall
-            self.fall_prob = prob
-            
-            # Gửi cảnh báo nếu phát hiện té ngã
-            if is_fall and self.fall_alert_callback:
-                alert_frame = frame.copy()
-                self.draw_overlays(alert_frame, True, scale_x, scale_y)
-                self.fall_alert_callback(self.source_id, alert_frame, AlertType.FALL)
-                print(f"🚨 FALL DETECTED - Camera {self.source_id} (prob={prob:.2f})")
-                
-                # Reset để không gửi liên tục
-                self.fall_detector.reset()
-                
-        except Exception as e:
-            print(f"Lỗi phát hiện té ngã: {e}")
+            # Reset để không gửi liên tục
+            self.fall_detector.reset()
     
     # Xử lý kết quả từ các worker queue
     def process_results(self, frame, scale_x, scale_y):
         self.fire_boxes = []
         
-        try:
-            while not self.result_queue.empty():
-                result = self.result_queue.get_nowait()
-                result_type = result[0]
-                
-                if result_type == 'fire':
-                    detections = result[1]
-                    self.handle_fire_detections(detections, frame, scale_x, scale_y)
-                    
-        except queue.Empty:
-            pass
+        while not self.result_queue.empty():
+            result = self.result_queue.get_nowait()
+            result_type = result[0]
+            
+            if result_type == 'fire':
+                detections = result[1]
+                self.handle_fire_detections(detections, frame, scale_x, scale_y)
     
-    # Xử lý phát hiện cháy với hệ thống Red Alert Mode
+    # Xử lý kết quả cháy (Red/Yellow alert)
     def handle_fire_detections(self, detections, frame, scale_x, scale_y):
         
-        # Yellow Alert: Nghi ngờ có cháy (cần xác nhận thêm)
-        # Red Alert: Chắc chắn có cháy (nguy hiểm!)
         validated_dets = []
         
         for det in detections:
@@ -418,7 +361,7 @@ class Camera:
             
             self.fire_alert_callback(self.source_id, alert_frame, alert_type)
     
-    # Vẽ các thông tin lên frame
+    # Vẽ thông tin lên frame
     def draw_overlays(self, frame, detection_enabled, scale_x=1.0, scale_y=1.0):
         
         # ----- Vẽ box cháy (đỏ) -----
@@ -485,7 +428,7 @@ class Camera:
             prob_text = f"Prob: {self.fall_prob:.2f}"
             cv2.putText(frame, prob_text, (x, y + 35), font, 0.7, (0, 0, 255), 2)
     
-    # Vẽ box người
+    # Vẽ box người và tên
     def draw_persons(self, frame, scale_x=1.0, scale_y=1.0):
         tracks = self.person_tracker.tracks
         
@@ -528,14 +471,10 @@ class Camera:
             cv2.rectangle(frame, (x1, label_y1), (label_x2, label_y2), color, -1)
             cv2.putText(frame, label, (x1 + 4, label_y2 - 4), font, font_scale, (255, 255, 255), thickness)
     
-    # Phát hiện chế độ IR (hồng ngoại/ban đêm)
+    # Phát hiện IR (camera đen trắng/ban đêm)
     def detect_ir(self, frame):
-        
-        # Camera IR chỉ có đen trắng, không có màu.
-        # Khi camera chuyển sang ban đêm, cần điều chỉnh các ngưỡng.
-        # Nếu user đã toggle thủ công, không auto detect
         if self.ir_manual_override is not None:
-            return
+             return
         
         # Lấy mẫu (sample) để tính nhanh
         sample = frame[::10, ::10]
@@ -610,9 +549,7 @@ class Camera:
     def get_connection_status(self):
         return self.cap is not None and self.cap.isOpened() and self.check_health()
     
-    # Kiểm tra có mối nguy hiểm đang hoạt động không
-    # Dùng để quyết định có kéo dài thời gian ghi video không
-    # 1. Kiểm tra cháy
+    # Kiểm tra mối nguy (cháy, người lạ) để quyết định ghi video
     def has_active_threat(self):
         if self.fire_tracker.get_is_red_alert() or self.fire_tracker.get_is_yellow_alert():
             return True

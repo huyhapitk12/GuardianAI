@@ -2,7 +2,6 @@ import gc
 import os
 import time
 import threading
-import functools
 from pathlib import Path
 
 from concurrent.futures import ThreadPoolExecutor
@@ -13,7 +12,6 @@ from config import settings
 # Thử lại khi lỗi
 def retry(attempts=3, delay=1.0):
     def decorator(func):
-        @functools.wraps(func)
         def wrapper(*args, **kwargs):
             last_error = None
             for i in range(attempts):
@@ -30,7 +28,6 @@ def retry(attempts=3, delay=1.0):
 
 # Chạy hàm trong luồng nền
 def threaded(func):
-    @functools.wraps(func)
     def wrapper(*args, **kwargs):
         thread = threading.Thread(target=func, args=args, kwargs=kwargs, daemon=True)
         thread.start()
@@ -38,9 +35,7 @@ def threaded(func):
     return wrapper
 
 
-# ==================== ALARM ====================
-
-# Phát âm thanh cảnh báo với hiệu ứng fade-in
+# Phát âm thanh cảnh báo (fade-in)
 class AlarmPlayer:
     
     
@@ -50,35 +45,26 @@ class AlarmPlayer:
         self._thread = None
     
     def initialize(self):
-        try:
-            pygame.mixer.pre_init(22050, -16, 2, 512)
-            pygame.mixer.init()
-            return True
-        except Exception:
-            return False
+        pygame.mixer.pre_init(22050, -16, 2, 512)
+        pygame.mixer.init()
+        return True
     
     def play(self):
         if not self._sound_file.exists():
             return
         
-        try:
-            if not pygame.mixer.music.get_busy():
-                self._stop_flag.clear()
-                pygame.mixer.music.load(str(self._sound_file))
-                pygame.mixer.music.set_volume(settings.alarm.start_volume)
-                pygame.mixer.music.play(loops=-1)
-                self._thread = threading.Thread(target=self._fade_in, daemon=True)
-                self._thread.start()
-        except Exception as e:
-            print(f"Alarm error: {e}")
+        if not pygame.mixer.music.get_busy():
+            self._stop_flag.clear()
+            pygame.mixer.music.load(str(self._sound_file))
+            pygame.mixer.music.set_volume(settings.alarm.start_volume)
+            pygame.mixer.music.play(loops=-1)
+            self._thread = threading.Thread(target=self._fade_in, daemon=True)
+            self._thread.start()
     
     def stop(self):
-        try:
-            self._stop_flag.set()
-            if pygame.mixer.music.get_busy():
-                pygame.mixer.music.stop()
-        except Exception:
-            pass
+        self._stop_flag.set()
+        if pygame.mixer.music.get_busy():
+            pygame.mixer.music.stop()
     
     def _fade_in(self):
         start = time.time()
@@ -92,22 +78,14 @@ class AlarmPlayer:
                 break
             
             vol = start_vol + (max_vol - start_vol) * (elapsed / duration)
-            try:
-                pygame.mixer.music.set_volume(min(vol, max_vol))
-            except Exception:
-                break
+            pygame.mixer.music.set_volume(min(vol, max_vol))
             time.sleep(0.1)
         
         if not self._stop_flag.is_set():
-            try:
-                pygame.mixer.music.set_volume(max_vol)
-            except Exception:
-                pass
+            pygame.mixer.music.set_volume(max_vol)
 
 
-# Biến alarm toàn cục
 _alarm = None
-
 
 def init_alarm():
     global _alarm
@@ -125,9 +103,7 @@ def stop_alarm():
         _alarm.stop()
 
 
-# ==================== MEMORY ====================
-
-# Lấy dung lượng bộ nhớ hiện tại (MB)
+# Lấy RAM usage (MB)
 def get_memory_mb():
     return psutil.Process().memory_info().rss / 1024 / 1024
 
@@ -137,10 +113,8 @@ def cleanup_memory():
     gc.collect()
 
 
-# Giám sát và dọn dẹp bộ nhớ chạy nền
+# Giám sát & dọn dẹp RAM
 class MemoryMonitor:
-    
-    
     def __init__(self, threshold_mb=800, interval=60):
         self._running = False
         self._thread = None
@@ -166,9 +140,7 @@ class MemoryMonitor:
             time.sleep(self._interval)
 
 
-# ==================== THREAD POOL ====================
-
-# Thread pool đơn giản cho các tác vụ bất đồng bộ
+# Thread pool đơn giản
 class TaskPool:
     
     
@@ -178,25 +150,18 @@ class TaskPool:
     
     # Gửi task vào pool
     def submit(self, func, *args, **kwargs):
-        try:
-            future = self._executor.submit(func, *args, **kwargs)
-            self._stats['submitted'] += 1
-            future.add_done_callback(self._on_done)
-            return future
-        except Exception:
-            return None
+        future = self._executor.submit(func, *args, **kwargs)
+        self._stats['submitted'] += 1
+        future.add_done_callback(self._on_done)
+        return future
     
     def _on_done(self, future):
-        try:
-            future.result()
-            self._stats['completed'] += 1
-        except Exception:
-            self._stats['failed'] += 1
+        future.result()
+        self._stats['completed'] += 1
     
     def shutdown(self, wait: bool = True):
         self._executor.shutdown(wait=wait)
     
-    @property
     def stats(self):
         return self._stats.copy()
 

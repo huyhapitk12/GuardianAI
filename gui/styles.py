@@ -84,27 +84,7 @@ class Fonts:
     TINY = (FAMILY, 10, "normal")
 
 
-# ============================================================================
-# WIDGET FACTORIES
-# ============================================================================
-
-def create_button(
-    parent,
-    text: str,
-    variant: str = "primary",
-    size: str = "medium",
-    icon: str = None,
-    **kwargs
-) -> ctk.CTkButton:
-    # Create styled button
-    
-    # Args:
-    #     parent: Parent widget
-    #     text: Button text
-    #     variant: "primary", "secondary", "ghost", "danger", "success"
-    #     size: "small", "medium", "large"
-    #     icon: Optional icon prefix
-    #     **kwargs: Additional CTkButton arguments (override defaults)
+def create_button(parent, text: str, variant: str = "primary", size: str = "medium", icon: str = None, **kwargs):
     
     VARIANTS = {
         "primary": {
@@ -161,7 +141,7 @@ def create_button(
     return ctk.CTkButton(parent, **config)
 
 
-def create_card(parent, **kwargs) -> ctk.CTkFrame:
+def create_card(parent, **kwargs):
     # Create card frame
     defaults = {
         "fg_color": Colors.BG_SECONDARY,
@@ -178,7 +158,7 @@ def create_entry(
     placeholder: str = "",
     icon: str = None,
     **kwargs
-) -> Tuple[ctk.CTkFrame, ctk.CTkEntry]:
+):
     # Create styled entry with optional icon
     
     frame = ctk.CTkFrame(parent, fg_color="transparent")
@@ -217,7 +197,7 @@ def create_switch(
     variable: ctk.StringVar,
     command=None,
     **kwargs
-) -> ctk.CTkSwitch:
+):
     # Create styled switch
     defaults = {
         "text": text,
@@ -238,7 +218,7 @@ def create_label(
     style: str = "body",
     color: str = None,
     **kwargs
-) -> ctk.CTkLabel:
+):
     # Create styled label
     
     STYLES = {
@@ -264,7 +244,7 @@ def create_slider(
     value: float = None,
     command=None,
     **kwargs
-) -> ctk.CTkSlider:
+):
     # Create styled slider
     defaults = {
         "from_": from_,
@@ -290,7 +270,7 @@ def create_option_menu(
     variable: ctk.StringVar = None,
     command=None,
     **kwargs
-) -> ctk.CTkOptionMenu:
+):
     # Create styled option menu
     defaults = {
         "values": values,
@@ -311,7 +291,7 @@ def create_option_menu(
     return ctk.CTkOptionMenu(parent, **defaults)
 
 
-def create_progress_bar(parent, **kwargs) -> ctk.CTkProgressBar:
+def create_progress_bar(parent, **kwargs):
     # Create styled progress bar
     defaults = {
         "progress_color": Colors.PRIMARY,
@@ -322,7 +302,7 @@ def create_progress_bar(parent, **kwargs) -> ctk.CTkProgressBar:
     return ctk.CTkProgressBar(parent, **defaults)
 
 
-def create_scrollable_frame(parent, **kwargs) -> ctk.CTkScrollableFrame:
+def create_scrollable_frame(parent, **kwargs):
     # Create styled scrollable frame
     defaults = {
         "fg_color": Colors.BG_PRIMARY,

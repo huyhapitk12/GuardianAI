@@ -5,7 +5,7 @@ from enum import Enum
 from pathlib import Path
 import yaml
 
-# Quản lý cấu hình: tải từ file YAML và biến môi trường
+# Quản lý cấu hình (YAML + ENV)
 class Settings:
     def __init__(self, config_path='config/config.yaml'):
         self.base_dir = Path(__file__).parent.parent
@@ -18,7 +18,7 @@ class Settings:
         self._resolve_paths()
         self._process_special_values()
 
-    # Đệ quy xử lý biến môi trường trong config
+    # Xử lý biến môi trường (recursive)
     def _resolve_env_vars(self, data):
         if isinstance(data, dict):
             return {k: self._resolve_env_vars(v) for k, v in data.items()}
@@ -31,7 +31,7 @@ class Settings:
                 return os.getenv(var_name, default_val)
         return data
 
-    # Chuyển đường dẫn tương đối thành tuyệt đối
+    # Path Relative -> Absolute
     def _resolve_paths(self):
         if 'paths' in self._config:
             for key, value in self._config['paths'].items():
@@ -42,7 +42,7 @@ class Settings:
             if tmp_dir:
                 tmp_dir.mkdir(exist_ok=True)
 
-    # Xử lý các giá trị đặc biệt (ví dụ: camera.sources)
+    # Parse giá trị đặt biệt
     def _process_special_values(self):
         if 'camera' in self._config and 'sources' in self._config['camera']:
             sources_val = self._config['camera']['sources']
@@ -68,7 +68,7 @@ class Settings:
             else:
                 self._config['camera']['sources'] = []
 
-    # Lấy đường dẫn model YOLO dựa trên loại, kích thước và định dạng
+    # Lấy path model YOLO
     def get_yolo_model_path(self, model_type, size, format_type=None):
         if format_type is None:
             format_type = self.get('models.yolo_format', 'pytorch')
@@ -81,12 +81,14 @@ class Settings:
             model_path = base_path / f"{size}.onnx"
         elif format_type.lower() == 'openvino':
             model_path = base_path / f"{size}_openvino_model"
+        elif format_type.lower() == 'tensorrt':
+            model_path = base_path / f"{size}.engine"
         else:
             print(f"WARNING: Unknown YOLO format '{format_type}', using pytorch")
             model_path = base_path / f"{size}.pt"
         return model_path
 
-    # Cho phép truy cập config kiểu attribute
+    # Get attr : config value
     def __getattr__(self, name):
         if name in self._config:
             value = self._config[name]
@@ -95,18 +97,15 @@ class Settings:
             return value
         raise AttributeError(f"'Settings' object has no attribute '{name}'")
 
-    # Lấy giá trị kiểu dict
+    # Get value (supports dot notation)
     def get(self, key, default=None):
         keys = key.split('.')
         value = self._config
-        try:
-            for k in keys:
-                value = value[k]
-            return value
-        except (KeyError, TypeError):
-            return default
+        for k in keys:
+            value = value[k]
+        return value
 
-    # Cập nhật giá trị setting theo key
+    # Update setting
     def set(self, key, value):
         keys = key.split('.')
         current = self._config
@@ -116,26 +115,23 @@ class Settings:
             current = current[k]
         current[keys[-1]] = value
 
-    # Lưu cấu hình hiện tại xuống file
+    # Lưu lại config
     def save(self):
         data = self._prepare_for_save(self._config)
         save_raw_config(data)
         
-    # Đệ quy chuyển đổi Path object thành chuỗi để lưu
+    # Helper: Prepare for YAML
     def _prepare_for_save(self, data):
         if isinstance(data, dict):
             return {k: self._prepare_for_save(v) for k, v in data.items()}
         elif isinstance(data, list):
             return [self._prepare_for_save(i) for i in data]
         elif isinstance(data, Path):
-            try:
-                # Try to make path relative to project root
-                return str(data.relative_to(self.base_dir))
-            except ValueError:
-                return str(data)
+            # Try to make path relative to project root
+            return str(data.relative_to(self.base_dir))
         return data
 
-# Proxy để truy cập dictionary lồng nhau như attribute
+# Helper: Truy cập dict như object
 class _ConfigProxy:
     def __init__(self, data: dict):
         self._data = data
@@ -151,7 +147,7 @@ class _ConfigProxy:
     def __getitem__(self, key):
         return self._data[key]
 
-# --- Enum cho type hints ---
+# Loại Alert
 class AlertType(Enum):
     KNOWN_PERSON = "nguoi_quen"
     STRANGER = "nguoi_la"
@@ -160,7 +156,7 @@ class AlertType(Enum):
     ANOMALOUS_BEHAVIOR = "hanh_vi_bat_thuong"
     FALL = "te_nga"
 
-# Mức độ ưu tiên cảnh báo
+# Mức độ ưu tiên
 class AlertPriority(Enum):
     CRITICAL = 1  # Báo động cháy - cần xử lý ngay lập tức
     HIGH = 2      # Người lạ có hành vi bất thường - đe dọa an ninh
@@ -174,36 +170,28 @@ class ActionCode(Enum):
     ALARM_ON = "ALARM_ON"
     ALARM_OFF = "ALARM_OFF"
 
-# Lấy đường dẫn file config
+# Lấy path file config
 def _get_config_path():
     base_dir = Path(__file__).parent.parent
     return base_dir / 'config/config.yaml'
 
-# Tải file config thô
+# Load config raw
 def load_raw_config():
     config_path = _get_config_path()
     if not config_path.exists():
         print(f"ERROR: Config not found: {config_path}")
         return {}
-    try:
-        with open(config_path, 'r', encoding='utf-8') as f:
-            return yaml.safe_load(f)
-    except Exception as e:
-        print(f"ERROR: Error loading config: {e}")
-        return {}
+    with open(config_path, 'r', encoding='utf-8') as f:
+        return yaml.safe_load(f)
 
-# Lưu config thô
+# Save config raw
 def save_raw_config(data):
     config_path = _get_config_path()
-    try:
-        with open(config_path, 'w', encoding='utf-8') as f:
-            yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
-        return True
-    except Exception as e:
-        print(f"ERROR: Error saving config: {e}")
-        return False
+    with open(config_path, 'w', encoding='utf-8') as f:
+        yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
+    return True
 
-# Cập nhật giá trị config và lưu
+# Cập nhật và lưu config
 def update_config_value(key_path, value):
     config = load_raw_config()
     if not config:
@@ -227,7 +215,7 @@ def update_config_value(key_path, value):
         return True
     return False
 
-# Thêm camera mới vào config
+# Thêm camera (nhanh)
 def add_camera_source_to_config(new_source):
     config = load_raw_config()
     if not config:
@@ -252,5 +240,5 @@ def add_camera_source_to_config(new_source):
     else:
         return False, "Error saving config"
 
-# Phiên bản cài đặt toàn cục
+# Global settings
 settings = Settings()

@@ -94,15 +94,12 @@ class GalleryPanel(ctk.CTkFrame):
         files = []
         for f in tmp_dir.iterdir():
             if f.suffix.lower() in ('.jpg', '.png', '.mp4'):
-                try:
-                    files.append({
-                        'path': f,
-                        'time': f.stat().st_mtime,
-                        'name': f.name,
-                        'type': 'video' if f.suffix == '.mp4' else 'image'
-                    })
-                except Exception:
-                    pass
+                files.append({
+                    'path': f,
+                    'time': f.stat().st_mtime,
+                    'name': f.name,
+                    'type': 'video' if f.suffix == '.mp4' else 'image'
+                })
         
         files.sort(key=lambda x: x['time'], reverse=True)
         
@@ -134,17 +131,13 @@ class GalleryPanel(ctk.CTkFrame):
         self.set_preview(text="Loading...")
         
         def load_thread():
-            try:
-                if item['type'] == 'image':
-                    self.after(0, lambda: self.controls.grid_remove())
-                    self.load_image(item['path'])
-                else:
-                    self.after(0, lambda: self.controls.grid())
-                    self.after(0, lambda: self.play_btn.configure(text="▶ Play"))
-                    self.load_video(item['path'])
-            except Exception as e:
-                print(f"Load error: {e}")
-                self.set_preview(text="Error loading file")
+            if item['type'] == 'image':
+                self.after(0, lambda: self.controls.grid_remove())
+                self.load_image(item['path'])
+            else:
+                self.after(0, lambda: self.controls.grid())
+                self.after(0, lambda: self.play_btn.configure(text="▶ Play"))
+                self.load_video(item['path'])
         
         threading.Thread(target=load_thread, daemon=True).start()
     
@@ -244,10 +237,7 @@ class GalleryPanel(ctk.CTkFrame):
             if not self.playing or self.stop_event.is_set():
                 self.current_frame = int(cap.get(cv2.CAP_PROP_POS_FRAMES))
                 cap.release()
-                try:
-                    self.play_btn.configure(text="▶ Resume")
-                except Exception:
-                    pass
+                self.play_btn.configure(text="▶ Resume")
                 return
             
             ret, frame = cap.read()
@@ -255,10 +245,7 @@ class GalleryPanel(ctk.CTkFrame):
                 cap.release()
                 self.playing = False
                 self.current_frame = 0
-                try:
-                    self.play_btn.configure(text="▶ Play")
-                except Exception:
-                    pass
+                self.play_btn.configure(text="▶ Play")
                 return
             
             frame_rgb = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
@@ -268,13 +255,9 @@ class GalleryPanel(ctk.CTkFrame):
             if w > 10 and h > 10:
                 pil_img.thumbnail((w, h))
             
-            try:
-                ctk_img = CTkImage(pil_img, size=pil_img.size)
-                self.image_ref = ctk_img
-                self.set_preview(image=ctk_img)
-            except Exception:
-                cap.release()
-                return
+            ctk_img = CTkImage(pil_img, size=pil_img.size)
+            self.image_ref = ctk_img
+            self.set_preview(image=ctk_img)
             
             self.after(33, update_frame)
         
@@ -282,10 +265,7 @@ class GalleryPanel(ctk.CTkFrame):
     
     # Cập nhật preview an toàn
     def set_preview(self, **kwargs):
-        try:
-            self.preview.configure(**kwargs)
-        except Exception:
-            pass
+        self.preview.configure(**kwargs)
     
     # Dọn dẹp tài nguyên
     def cleanup(self):
@@ -296,10 +276,7 @@ class GalleryPanel(ctk.CTkFrame):
         self.set_preview(image=None, text="")
         
         if self.temp_file and self.temp_file.exists():
-            try:
-                self.temp_file.unlink()
-            except Exception:
-                pass
+            self.temp_file.unlink()
         self.temp_file = None
     
     def destroy(self):
