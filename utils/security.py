@@ -1,4 +1,4 @@
-# Các tiện ích bảo mật - mã hóa/giải mã
+# Bảo mật
 import cv2
 import numpy as np
 from pathlib import Path

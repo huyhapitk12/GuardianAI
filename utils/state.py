@@ -1,11 +1,11 @@
-# State management và alert handling
+# Quản lý trạng thái và xử lý cảnh báo
 import threading
 import time
 from collections import deque
 from config import settings, AlertType, AlertPriority
 
 
-# Alert information
+# Thông tin cảnh báo
 class Alert:
     def __init__(self, id, type, timestamp, source_id=None, chat_id=None, 
                  image_path=None, name=None, resolved=False, resolution=None):
@@ -31,7 +31,7 @@ class StateManager:
         self._alert_counter = 0
         self._unresolved = set()
     
-    # Quản lý state
+    # Quản lý trạng thái
     def set(self, key, value):
         with self._lock:
             self._states[key] = value
@@ -40,7 +40,7 @@ class StateManager:
         with self._lock:
             return self._states.get(key, default)
     
-    # Điều khiển detection
+    # Điều khiển phát hiện
     def is_detection_enabled(self, source_id=None):
         with self._lock:
             if source_id is None:
@@ -54,15 +54,9 @@ class StateManager:
             else:
                 self._detection_cameras[source_id] = enabled
     
-    # Aliases for compatibility
-    def is_person_detection_enabled(self, source_id=None):
-    # Tương thích ngược
-        return self.is_detection_enabled(source_id)
+
     
-    def set_person_detection_enabled(self, enabled, source_id=None):
-        self.set_detection(enabled, source_id)
-    
-    # Quản lý alert
+    # Quản lý cảnh báo
     def create_alert(self, alert_type, source_id=None,
                      chat_id=None, image_path=None,
                      name=None):
@@ -108,7 +102,7 @@ class StateManager:
             return key in self._unresolved
 
 
-# Ngăn chặn spam alert
+# Ngăn chặn spam cảnh báo
 class SpamGuard:
     def __init__(self):
         self._lock = threading.Lock()
@@ -125,16 +119,16 @@ class SpamGuard:
             if self._muted.get(key, 0) > now:
                 return False
             
-            # Check debounce
+            # Kiểm tra thời gian chờ
             if now - self._last_alert.get(key, 0) < self.config.debounce_seconds:
                 return False
             
-            # Check min interval (skip for critical)
+            # Kiểm tra khoảng thời gian tối thiểu (bỏ qua nếu khẩn cấp)
             if not is_critical and self._history:
                 if now - self._history[-1][0] < self.config.min_interval:
                     return False
             
-            # Check rate limit
+            # Kiểm tra giới hạn tần suất
             self._history = deque(
                 [(t, k) for t, k in self._history if now - t < 60],
                 maxlen=100
@@ -142,7 +136,7 @@ class SpamGuard:
             if len(self._history) >= self.config.max_per_minute:
                 return False
             
-            # Allow
+            # Cho phép
             self._last_alert[key] = now
             self._history.append((now, key))
             return True
@@ -152,6 +146,6 @@ class SpamGuard:
             self._muted[key] = time.time() + duration
 
 
-# Global instances
+# Các instance toàn cục
 state_manager = StateManager()
 spam_guard = SpamGuard()

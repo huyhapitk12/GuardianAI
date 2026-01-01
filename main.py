@@ -483,7 +483,6 @@ class GuardianApp:
 
 # Bắt đầu chương trình
 def main():
-    # Tạo và chạy ứng dụng
     app = GuardianApp()
     app.run()
 
