@@ -328,7 +328,7 @@ class PersonTracker:
         stranger_confirm = settings.get('tracker.stranger_confirm_frames', 30)
         
         for tid, track in self.tracks.items():
-            # ----- Cảnh báo người quen -----
+            # Cảnh báo người quen
             # Điều kiện: nhận diện đủ số lần + chưa xác nhận + chưa gửi cảnh báo
             if (track.face_hits >= known_confirm and 
                 not track.confirmed_name and 
@@ -340,7 +340,7 @@ class PersonTracker:
                 alerts.append((tid, AlertType.KNOWN_PERSON, 
                               {'name': track.name, 'distance': track.distance}))
             
-            # ----- Cảnh báo người lạ -----
+            # Cảnh báo người lạ
             # Điều kiện: chưa nhận diện được + đủ số frame + chưa gửi cảnh báo
             if not track.confirmed_name:
                 track.frames_unidentified += 1

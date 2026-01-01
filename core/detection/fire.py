@@ -93,7 +93,7 @@ class FireFilter:
     def validate_rgb(self, roi, bbox):
         cfg = self.config
         
-        # ----- Bước 1: Chuyển sang không gian màu HSV -----
+        # 1. Chuyển sang không gian màu HSV
         # HSV: Hue (màu sắc), Saturation (độ đậm), Value (độ sáng)
         # Dễ phân tích màu hơn RGB
         hsv = cv2.cvtColor(roi, cv2.COLOR_BGR2HSV).astype(np.float32)
@@ -145,23 +145,23 @@ class FireFilter:
         # Chuyển sang grayscale
         gray = cv2.cvtColor(roi, cv2.COLOR_BGR2GRAY).astype(np.float32)
         
-        # ----- Kiểm tra độ sáng -----
+        # Kiểm tra độ sáng
         if np.mean(gray) < cfg.ir_brightness_min and np.max(gray) < 180:
             return self.fail("brightness")
         
-        # ----- Kiểm tra độ biến thiên -----
+        # Kiểm tra độ biến thiên
         # Lửa không đồng đều : độ lệch chuẩn cao
         if np.std(gray) < cfg.ir_brightness_std_min:
             return self.fail("variation")
         
-        # ----- Kiểm tra tỉ lệ điểm nóng -----
+        # Kiểm tra tỉ lệ điểm nóng
         # Điểm nóng: pixel có giá trị > 200
         hot_ratio = np.sum(gray > 200) / gray.size
         
         if not (cfg.ir_hot_ratio_min <= hot_ratio <= cfg.ir_hot_ratio_max):
             return self.fail("hot_core")
         
-        # ----- Kiểm tra hình dạng -----
+        # Kiểm tra hình dạng
         # Lửa có hình dạng bất quy tắc (không tròn như đèn)
         _, thresh = cv2.threshold(gray.astype(np.uint8), 0, 255, 
                                    cv2.THRESH_BINARY + cv2.THRESH_OTSU)
@@ -180,7 +180,7 @@ class FireFilter:
                 if (1.0 - circ) < cfg.ir_irregularity_min:
                     return self.fail("shape")  # Quá tròn : đèn
         
-        # ----- Kiểm tra nhấp nháy -----
+        # Kiểm tra nhấp nháy
         if not self.check_flicker(gray.astype(np.uint8), bbox, cfg.ir_flicker_min):
             return self.fail("flicker")
         

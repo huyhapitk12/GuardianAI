@@ -164,13 +164,13 @@ class Camera:
                 continue
             last_time = now
             
-            # ----- Kiểm tra kết nối -----
+            # Kiểm tra kết nối
             if not self.cap or not self.cap.isOpened():
                 if not self.reconnect():
                     time.sleep(2.0)
                     continue
             
-            # ----- Đọc frame -----
+            # Đọc frame
             ret, frame = self.cap.read()
             if not ret or frame is None:
                 if not self.check_health():
@@ -180,17 +180,17 @@ class Camera:
             self.last_frame_time = time.time()
             self.frame_idx += 1
             
-            # ----- Dọn dẹp định kỳ -----
+            # Dọn dẹp định kỳ
             cleanup_counter += 1
             if cleanup_counter >= 100:
                 self.fire_filter.cleanup()
                 cleanup_counter = 0
             
-            # ----- Phát hiện chế độ IR (mỗi 10 frame) -----
+            # Phát hiện chế độ IR (mỗi 10 frame)
             if self.frame_idx % 10 == 0:
                 self.detect_ir(frame)
             
-            # ----- Áp dụng bộ lọc màu -----
+            # Áp dụng bộ lọc màu
             frame = self.apply_color_filter(frame)
             
             # Thay đổi kích thước giữ tỷ lệ khung hình để xử lý nhanh hơn
@@ -208,11 +208,11 @@ class Camera:
             scale_x = w / new_w
             scale_y = h / new_h
             
-            # ----- Kiểm tra xem phát hiện có bật không -----
+            # Kiểm tra xem phát hiện có bật không
             detection_enabled = state_manager.is_detection_enabled(self.source_id)
             self.last_detection_enabled = detection_enabled
             
-            # ----- Phát hiện chuyển động -----
+            # Phát hiện chuyển động
             has_motion = self.motion_detector.detect(small)
             
             # Logic tiết kiệm CPU: Có chuyển động -> chạy AI 5s
@@ -234,15 +234,15 @@ class Camera:
                     self.ai_active_until = now + 5.0
                     self.process_fall(frame, scale_x, scale_y)
             
-            # ----- Phát hiện cháy (luôn chạy vì quan trọng) -----
+            # Phát hiện cháy (luôn chạy)
             if not self.fire_queue.full():
                 self.fire_queue.put(small.copy())
                 self.fire_queue.put(small.copy())
             
-            # ----- Xử lý kết quả từ các worker -----
+            # Xử lý kết quả từ các worker
             self.process_results(frame, scale_x, scale_y)
             
-            # ----- Cập nhật frame hiển thị -----
+            # Cập nhật frame hiển thị
             display = frame.copy()
             self.draw_overlays(display, detection_enabled, scale_x, scale_y)
             
@@ -364,7 +364,7 @@ class Camera:
     # Vẽ thông tin lên khung hình
     def draw_overlays(self, frame, detection_enabled, scale_x=1.0, scale_y=1.0):
         
-        # ----- Vẽ box cháy (đỏ) -----
+        # Vẽ box cháy (đỏ)
         for box in self.fire_boxes:
             cv2.rectangle(frame, (box[0], box[1]), (box[2], box[3]), (0, 0, 255), 3)
             
@@ -379,11 +379,11 @@ class Camera:
                 cv2.putText(frame, text, (box[0], box[1] - 25),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
         
-        # ----- Vẽ box người -----
+        # Vẽ box người
         if detection_enabled:
             self.draw_persons(frame, scale_x, scale_y)
         
-        # ----- Vẽ box chuyển động (Cyan) -----
+        # Vẽ box chuyển động
         if hasattr(self.motion_detector, 'motion_boxes'):
             sx = scale_x
             sy = scale_y
@@ -398,16 +398,16 @@ class Camera:
                 cv2.putText(frame, "Motion", (final_x1, final_y1 - 2), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.4, (255, 255, 0), 1)
 
-        # ----- Hiển thị chế độ IR -----
+        # Hiển thị chế độ IR
         if self.is_ir:
             cv2.putText(frame, "IR MODE", (10, frame.shape[0] - 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
-        # ----- Vẽ khung xương nếu có bộ phát hiện té ngã -----
+        # Vẽ khung xương nếu có bộ phát hiện té ngã
         if self.fall_detector and self.fall_detector.last_kps is not None:
             self.fall_detector.draw_skeleton_overlay(frame)
         
-        # ----- Hiển thị phát hiện té ngã -----
+        # Hiển thị phát hiện té ngã
         if self.is_fall_detected:
             # Vẽ chữ FALL DETECTED lớn ở giữa màn hình
             h, w = frame.shape[:2]
@@ -446,19 +446,19 @@ class Camera:
                 name = "Person"
                 is_stranger = False
             
-            # ===== XÁC ĐỊNH MÀU BOX =====
+            # Xác định màu box
             if is_stranger:
                 color = (0, 165, 255)    # Cam - Người lạ
             else:
                 color = (0, 255, 0)      # Xanh lá - Người quen
             
-            # ===== VẼ BOX =====
+            # Vẽ box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, 2)
             
-            # ===== TẠO LABEL =====
+            # Tạo label
             label = f"ID:{tid} {name}"
             
-            # ===== VẼ LABEL =====
+            # Vẽ label
             font = cv2.FONT_HERSHEY_SIMPLEX
             font_scale = 0.5
             thickness = 1
