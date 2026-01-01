@@ -68,7 +68,7 @@ class Settings:
             else:
                 self._config['camera']['sources'] = []
 
-    # Lấy đường dẫn model YOLO
+    # Lấy path model YOLO
     def get_yolo_model_path(self, model_type, size, format_type=None):
         if format_type is None:
             format_type = self.get('models.yolo_format', 'pytorch')
@@ -115,7 +115,7 @@ class Settings:
             current = current[k]
         current[keys[-1]] = value
 
-    # Lưu cấu hình
+    # Lưu lại config
     def save(self):
         data = self._prepare_for_save(self._config)
         save_raw_config(data)
@@ -170,12 +170,12 @@ class ActionCode(Enum):
     ALARM_ON = "ALARM_ON"
     ALARM_OFF = "ALARM_OFF"
 
-# Lấy đường dẫn file cấu hình
+# Lấy path file config
 def _get_config_path():
     base_dir = Path(__file__).parent.parent
     return base_dir / 'config/config.yaml'
 
-# Tải cấu hình thô
+# Tải config raw
 def load_raw_config():
     config_path = _get_config_path()
     if not config_path.exists():
@@ -184,14 +184,14 @@ def load_raw_config():
     with open(config_path, 'r', encoding='utf-8') as f:
         return yaml.safe_load(f)
 
-# Lưu cấu hình thô
+# Save config raw
 def save_raw_config(data):
     config_path = _get_config_path()
     with open(config_path, 'w', encoding='utf-8') as f:
         yaml.dump(data, f, default_flow_style=False, allow_unicode=True)
     return True
 
-# Cập nhật và lưu cấu hình
+# Cập nhật và lưu config
 def update_config_value(key_path, value):
     config = load_raw_config()
     if not config:
@@ -240,5 +240,4 @@ def add_camera_source_to_config(new_source):
     else:
         return False, "Error saving config"
 
-# Cấu hình toàn cục
 settings = Settings()

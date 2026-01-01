@@ -1,4 +1,4 @@
-# Telegram bot service
+# Telegram bot
 
 import asyncio
 import json
@@ -32,7 +32,7 @@ def send_photo(chat_id, photo_path, caption="",
     for _ in range(3):
         url = f"https://api.telegram.org/bot{settings.telegram.token}/sendPhoto"
         
-        # Try decrypt
+        # Cố gắng giải mã
         data = security.decrypt_file(photo_path)
         if data:
             files = {'photo': ('image.jpg', data)}
@@ -85,7 +85,7 @@ def send_video(chat_id, video_path, caption=""):
     return response.status_code == 200
 
 
-# AI Chat Assistant
+# Trợ lý Chat AI
 class AIAssistant:
     
     
@@ -105,7 +105,7 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
                 timeout=settings.telegram.httpx_timeout
             )
     
-    # Xử lý tin nhắn -> (reply, action)
+    # Xử lý tin nhắn -> (trả lời, hành động)
     async def process(self, chat_id, message):
         if not self.enabled or not self.client:
             return self.simple_response(message), None
@@ -146,14 +146,14 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
         
         reply = response.choices[0].message.content.strip() if response.choices else ""
         
-        # Extract action
+        # Trích xuất hành động
         action = None
         match = re.search(r'\[ACTION:([^\]]+)\]', reply)
         if match:
             action = match.group(1)
             reply = re.sub(r'\s*\[ACTION:[^\]]+\]\s*', '', reply).strip()
         
-        # Update history
+        # Cập nhật lịch sử
         history.append({"role": "user", "content": message})
         history.append({"role": "model", "content": reply})
         self.history[chat_id] = history[-20:]
@@ -166,7 +166,7 @@ Có thể dùng: [ACTION:TOGGLE_ON], [ACTION:TOGGLE_OFF], [ACTION:GET_IMAGE], [A
             self.history[chat_id] = []
         self.history[chat_id].append({"role": "system", "content": message})
     
-    # Clear chat history
+    # Xóa lịch sử trò chuyện
     def clear(self, chat_id):
         self.history.pop(chat_id, None)
 
@@ -288,14 +288,14 @@ class GuardianBot:
         data = query.data
         action, alert_id = data.split(":", 1)
         
-        # Stop alarm
+        # Dừng báo động
         if self.alarm:
             self.alarm.stop()
         
-        # Resolve alert
+        # Giải quyết cảnh báo
         state_manager.resolve_alert(alert_id, f"user:{action}")
         
-        # Update caption
+        # Cập nhật chú thích
         caption = query.message.caption or ""
         
         if "fire_real" in action:
@@ -306,7 +306,7 @@ class GuardianBot:
             caption += "\n❌ Báo động giả"
         elif "person_yes" in action:
             caption += "\n✅ Người quen"
-            # Put response in queue
+            # Đưa phản hồi vào hàng đợi
             self.response_queue.put({"alert_id": alert_id, "decision": "yes"})
         elif "person_no" in action:
             if self.alarm:
@@ -328,7 +328,7 @@ class GuardianBot:
             daemon=True
         ).start()
     
-    # Gửi tin nhắn định kì
+    # Gửi tin nhắn định kỳ
     def send_heartbeat(self):
         
         status = "🟢" if state_manager.is_detection_enabled() else "🔴"
@@ -344,7 +344,7 @@ class GuardianBot:
         url = f"https://api.telegram.org/bot{settings.telegram.token}/sendMessage"
         get_session().post(url, data={'chat_id': chat_id, 'text': text}, timeout=10)
     
-    # Run bot
+    # Chạy bot
     def run(self):
         if not self.app:
             return
@@ -361,7 +361,7 @@ class GuardianBot:
         while not self.quit:
             await asyncio.sleep(1)
         
-        # Proper shutdown sequence: stop updater first, then stop app, then shutdown
+        # Chuỗi tắt máy đúng cách: dừng bộ cập nhật trước, sau đó dừng ứng dụng, rồi tắt máy
         await self.app.updater.stop()
         await self.app.stop()
         await self.app.shutdown()

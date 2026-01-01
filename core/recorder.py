@@ -23,7 +23,7 @@ class Recorder:
         print("✅ Khởi tạo recorder xong")
 
 
-    # Bắt đầu session ghi
+    # Bắt đầu phiên ghi hình
     def start(self, source_id, reason="alert", duration=None, wait_for_user=False):
         print("Bắt đầu ghi video...")
         print(source_id)
@@ -33,14 +33,14 @@ class Recorder:
         
         with self.lock:
             if self.dang_ghi is not None:
-                print("dang ghi roi bo qua")
+                print("Đang ghi rồi, bỏ qua")
                 return None
             
             # Tạo tên file
             filename = f"rec_{reason}_{int(time.time())}_{uuid.uuid4().hex[:8]}.mp4"
             path = self.out_dir / filename
             
-            print("file name:", filename)
+            print("Tên file:", filename)
 
             self.dang_ghi = {
                 'path': path,
@@ -48,7 +48,7 @@ class Recorder:
                 'end_time': time.time() + duration,
                 'source_id': source_id,
                 'reason': reason,
-                'alert_ids': [], # Danh sách alert
+                'alert_ids': [], # Danh sách cảnh báo
                 'wait_for_user': wait_for_user,
             }
             
@@ -62,7 +62,7 @@ class Recorder:
             
             # Init writer nếu chưa có
             if self.dang_ghi['writer'] is None:
-                print("tao writer moi")
+                print("Tạo writer mới")
                 h, w = frame.shape[:2]
                 writer = cv2.VideoWriter(
                     str(self.dang_ghi['path']),
@@ -71,7 +71,7 @@ class Recorder:
                     (w, h)
                 )
                 if not writer.isOpened():
-                    print("loi khong mo duoc file video")
+                    print("Lỗi: Không mở được file video")
                     self.dang_ghi = None
                     return False
                 self.dang_ghi['writer'] = writer
@@ -90,10 +90,10 @@ class Recorder:
                 return None
             
             if self.dang_ghi.get('wait_for_user'):
-                # print("doi user...")
+                # print("Đợi người dùng...")
                 return None
             
-            print("xong video")
+            print("Xong video")
             return self.finalize()
     
     # Kết thúc và mã hóa file
@@ -106,7 +106,7 @@ class Recorder:
         
         # Mã hóa file
         if rec['path'].exists():
-            print("ma hoa file...")
+            print("Mã hóa file...")
             security.encrypt_file(rec['path'])
         
         return {
@@ -116,9 +116,9 @@ class Recorder:
         }
 
 
-    # Dừng ghi (force stop)
+    # Dừng ghi (bắt buộc dừng)
     def stop(self):
-        print("stop ghi")
+        print("Dừng ghi")
         with self.lock:
             if self.dang_ghi:
                 self.dang_ghi['end_time'] = time.time()
@@ -126,7 +126,7 @@ class Recorder:
     
     # Hủy bỏ (xóa file)
     def discard(self):
-        print("huy bo video")
+        print("Hủy bỏ video")
         with self.lock:
             if self.dang_ghi is None:
                 return False
@@ -142,14 +142,14 @@ class Recorder:
     
     # Gia hạn thời gian
     def extend(self, seconds):
-        print(f"gia han them {seconds}s")
+        print(f"Gia hạn thêm {seconds}s")
         with self.lock:
             if self.dang_ghi:
                 self.dang_ghi['end_time'] += seconds
     
     # Dừng chờ user
     def resolve_user_wait(self):
-        print("user da phan hoi")
+        print("Người dùng đã phản hồi")
         with self.lock:
             if self.dang_ghi:
                 self.dang_ghi['wait_for_user'] = False
