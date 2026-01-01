@@ -37,8 +37,6 @@ def threaded(func):
 
 # Phát âm thanh cảnh báo (fade-in)
 class AlarmPlayer:
-    
-    
     def __init__(self, sound_file):
         self._sound_file = sound_file
         self._stop_flag = threading.Event()
@@ -103,7 +101,7 @@ def stop_alarm():
         _alarm.stop()
 
 
-# Lấy RAM usage (MB)
+# Lấy RAM sử dụng (MB)
 def get_memory_mb():
     return psutil.Process().memory_info().rss / 1024 / 1024
 

@@ -1,4 +1,4 @@
-# Panel cài đặt nâng cao với tùy chỉnh toàn diện
+# Bảng cài đặt nâng cao với tùy chỉnh toàn diện
 
 import json
 from pathlib import Path
@@ -11,7 +11,7 @@ from config import settings
 from gui.styles import Colors, Fonts, Sizes, create_button, create_card, create_entry
 
 
-# Panel cài đặt toàn diện
+# Bảng cài đặt toàn diện
 class SettingsPanel(ctk.CTkFrame):
     
     def __init__(self, parent, state_manager=None, **kwargs):
@@ -20,8 +20,8 @@ class SettingsPanel(ctk.CTkFrame):
         self.state = state_manager
         self.pages = {}
         self.nav_buttons = {}
-        self.setting_vars = {}  # Store all setting variables
-        self.original_values = {}  # For reset functionality
+        self.setting_vars = {}  # Lưu trữ tất cả biến cài đặt
+        self.original_values = {}  # Cho chức năng đặt lại
         self.has_changes = BooleanVar(value=False)
         
         self.grid_columnconfigure(0, weight=0)
@@ -31,10 +31,10 @@ class SettingsPanel(ctk.CTkFrame):
         self.build_sidebar()
         self.build_content()
         
-        # Load current values
+        # Tải các giá trị hiện tại
         self.load_current_settings()
         
-        # Select first tab
+        # Chọn tab đầu tiên
         self.after(100, lambda: self.select_tab("detection"))
     
     # Xây dựng thanh điều hướng bên trái
@@ -43,7 +43,7 @@ class SettingsPanel(ctk.CTkFrame):
         sidebar.grid(row=0, column=0, sticky="nsew", padx=(0, Sizes.SM))
         sidebar.grid_propagate(False)
         
-        # Header
+        # Tiêu đề
         header = ctk.CTkFrame(sidebar, fg_color="transparent")
         header.pack(fill="x", padx=Sizes.MD, pady=Sizes.MD)
         
@@ -57,10 +57,10 @@ class SettingsPanel(ctk.CTkFrame):
             font=Fonts.CAPTION, text_color=Colors.TEXT_MUTED
         ).pack(anchor="w")
         
-        # Divider
+        # Phân cách
         ctk.CTkFrame(sidebar, fg_color=Colors.BORDER, height=1).pack(fill="x", padx=Sizes.MD, pady=Sizes.SM)
         
-        # Navigation tabs
+        # Các tab điều hướng
         tabs = [
             ("detection", "🎯", "Nhận diện"),
             ("camera", "📹", "Camera"),
@@ -87,7 +87,7 @@ class SettingsPanel(ctk.CTkFrame):
             btn.pack(fill="x", padx=Sizes.SM, pady=2)
             self.nav_buttons[key] = btn
         
-        # Bottom actions
+        # Các hành động phía dưới
         bottom = ctk.CTkFrame(sidebar, fg_color="transparent")
         bottom.pack(side="bottom", fill="x", padx=Sizes.SM, pady=Sizes.MD)
         
@@ -108,7 +108,7 @@ class SettingsPanel(ctk.CTkFrame):
         self.content.grid_columnconfigure(0, weight=1)
         self.content.grid_rowconfigure(0, weight=1)
         
-        # Create all pages
+        # Tạo tất cả các trang
         self.pages["detection"] = self.build_detection_page()
         self.pages["camera"] = self.build_camera_page()
         self.pages["alerts"] = self.build_alerts_page()
@@ -472,7 +472,7 @@ class SettingsPanel(ctk.CTkFrame):
         ctk.CTkLabel(header, text=label, font=Fonts.BODY,
                     text_color=Colors.TEXT_PRIMARY).pack(side="left")
         
-        # Determine if integer
+        # Xác định nếu là số nguyên
         is_int = isinstance(default, int) and isinstance(min_val, int) and isinstance(max_val, int)
         current = settings.get(key, default)
         
@@ -660,7 +660,7 @@ class SettingsPanel(ctk.CTkFrame):
                     var = data.get("var")
                     if var:
                         val = var.get()
-                        # Handle special cases like resolution
+                        # Xử lý các trường hợp đặc biệt như độ phân giải
                         if "x" in val and key.endswith("_size"):
                             parts = val.split("x")
                             changes[key] = [int(parts[0]), int(parts[1])]
@@ -677,11 +677,11 @@ class SettingsPanel(ctk.CTkFrame):
                     if widget:
                         changes[key] = widget.get()
             
-            # Apply changes
+            # Áp dụng thay đổi
             for key, value in changes.items():
                 settings.set(key, value)
             
-            # Save to file
+            # Lưu vào file
             settings.save()
             
             self.has_changes.set(False)
@@ -702,7 +702,7 @@ class SettingsPanel(ctk.CTkFrame):
             )
     
     def reset_settings(self):
-        """Reset to default values"""
+        """Khôi phục về giá trị mặc định"""
         result = CTkMessagebox(
             title="Xác nhận",
             message="Khôi phục tất cả cài đặt về mặc định?",
@@ -714,10 +714,10 @@ class SettingsPanel(ctk.CTkFrame):
         if result != "Khôi phục":
             return
         
-        # Reset to defaults
+        # Khôi phục về mặc định
         settings.reset_to_defaults()
         
-        # Update UI widgets
+        # Cập nhật các widget UI
         for key, data in self.setting_vars.items():
             current = settings.get(key)
             if current is None:
@@ -760,7 +760,7 @@ class SettingsPanel(ctk.CTkFrame):
         )
     
     def clear_temp_data(self):
-        """Clear temporary data"""
+        """Xóa dữ liệu tạm"""
         result = CTkMessagebox(
             title="Xác nhận",
             message="Xóa tất cả dữ liệu tạm (video, ảnh cache)?",

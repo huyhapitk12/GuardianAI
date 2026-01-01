@@ -1,4 +1,4 @@
-# Panel quản lý Camera
+# Bảng quản lý Camera
 
 import cv2
 import uuid
@@ -28,7 +28,7 @@ class CamerasPanel(ctk.CTkFrame):
         self.brightness = 1.0
         self.running = True
         
-        # Get camera sources
+        # Lấy danh sách nguồn camera
         sources = list(camera_manager.cameras.keys()) if camera_manager else []
         if sources:
             self.selected_camera.set(sources[0])
@@ -116,15 +116,15 @@ class CamerasPanel(ctk.CTkFrame):
         ret, frame = cam.read()
         
         if ret and frame is not None:
-            # Resize with high-quality interpolation
+            # Đổi kích thước với phép nội suy chất lượng cao
             target_w, target_h = Sizes.VIDEO_WIDTH, Sizes.VIDEO_HEIGHT
             frame_resized = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LANCZOS4)
             
-            # Convert
+            # Chuyển đổi định dạng
             frame_rgb = cv2.cvtColor(frame_resized, cv2.COLOR_BGR2RGB)
             pil_img = Image.fromarray(frame_rgb)
             
-            # Brightness
+            # Độ sáng
             if self.brightness != 1.0:
                 pil_img = ImageEnhance.Brightness(pil_img).enhance(self.brightness)
             
@@ -137,7 +137,7 @@ class CamerasPanel(ctk.CTkFrame):
             if self.video_label.winfo_exists():
                 self.video_label.configure(text="🔄 Reconnecting...", image=None)
         
-        # Schedule next update
+        # Lên lịch cập nhật tiếp theo
         refresh_rate = 33 if self.state.is_detection_enabled() else 50
         self.after(refresh_rate, self.update_video)
     
@@ -151,11 +151,11 @@ class CamerasPanel(ctk.CTkFrame):
         from gui.dialogs import AddCameraDialog
         
         def on_success(source_id):
-            # Called when camera is added successfully
+            # Gọi khi camera được thêm thành công
             camera = self.camera_manager.get_camera(source_id)
             if camera and self.camera_list:
                 self.camera_list.add_camera(source_id, camera)
-                # Auto-select the new camera
+                # Tự động chọn camera mới
                 self.select_camera(source_id)
         
         dialog = AddCameraDialog(self, self.camera_manager, on_success=on_success)

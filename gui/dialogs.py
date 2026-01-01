@@ -1,4 +1,4 @@
-# GUI dialogs for Guardian application
+# Các hộp thoại GUI cho ứng dụng Guardian
 
 import customtkinter as ctk
 
@@ -7,7 +7,7 @@ from gui.widgets import log_activity
 
 
 class AddCameraDialog(ctk.CTkToplevel):
-    # Dialog for adding a new camera
+    # Hộp thoại thêm camera mới
     
     def __init__(self, parent, camera_manager, on_success=None):
         super().__init__(parent)
@@ -20,12 +20,12 @@ class AddCameraDialog(ctk.CTkToplevel):
         self.build_ui()
     
     def setup_window(self):
-        # Configure dialog window
+        # Cấu hình cửa sổ hộp thoại
         self.title("Add Camera")
         self.geometry("500x400")
         self.resizable(False, False)
         
-        # Center on parent
+        # Canh giữa cửa sổ cha
         self.transient(self.master)
         self.update_idletasks()
         
@@ -41,12 +41,12 @@ class AddCameraDialog(ctk.CTkToplevel):
         self.configure(fg_color=Colors.BG_PRIMARY)
     
     def build_ui(self):
-        # Build dialog UI
-        # Main container
+        # Xây dựng giao diện hộp thoại
+        # Container chính
         container = ctk.CTkFrame(self, fg_color=Colors.BG_SECONDARY, corner_radius=Sizes.RADIUS_LG)
         container.pack(fill="both", expand=True, padx=Sizes.LG, pady=Sizes.LG)
         
-        # Title
+        # Tiêu đề
         ctk.CTkLabel(
             container,
             text="📹 Add New Camera",
@@ -54,7 +54,7 @@ class AddCameraDialog(ctk.CTkToplevel):
             text_color=Colors.TEXT_PRIMARY
         ).pack(pady=(Sizes.LG, Sizes.MD))
         
-        # Description
+        # Mô tả
         ctk.CTkLabel(
             container,
             text="Enter camera source (webcam ID or RTSP URL)",
@@ -62,11 +62,11 @@ class AddCameraDialog(ctk.CTkToplevel):
             text_color=Colors.TEXT_SECONDARY
         ).pack(pady=(0, Sizes.LG))
         
-        # Input section
+        # Phần nhập liệu
         input_frame = ctk.CTkFrame(container, fg_color="transparent")
         input_frame.pack(fill="x", padx=Sizes.LG, pady=Sizes.MD)
         
-        # Source label
+        # Nhãn nguồn
         ctk.CTkLabel(
             input_frame,
             text="Camera Source:",
@@ -75,7 +75,7 @@ class AddCameraDialog(ctk.CTkToplevel):
             anchor="w"
         ).pack(anchor="w", pady=(0, Sizes.XS))
         
-        # Source entry
+        # Ô nhập nguồn
         self.source_entry = ctk.CTkEntry(
             input_frame,
             placeholder_text="e.g., 0, 1, or rtsp://...",
@@ -87,7 +87,7 @@ class AddCameraDialog(ctk.CTkToplevel):
         )
         self.source_entry.pack(fill="x", pady=(0, Sizes.SM))
         
-        # Examples
+        # Ví dụ
         examples_text = """Examples:
 • Webcam: 0, 1, 2...
 • RTSP: rtsp://username:password@ip:port/stream
@@ -102,7 +102,7 @@ class AddCameraDialog(ctk.CTkToplevel):
             justify="left"
         ).pack(anchor="w", pady=(Sizes.SM, 0))
         
-        # Status label
+        # Nhãn trạng thái
         self.status_label = ctk.CTkLabel(
             container,
             text="",
@@ -111,7 +111,7 @@ class AddCameraDialog(ctk.CTkToplevel):
         )
         self.status_label.pack(pady=Sizes.SM)
         
-        # Buttons
+        # Các nút
         btn_frame = ctk.CTkFrame(container, fg_color="transparent")
         btn_frame.pack(pady=(Sizes.LG, Sizes.MD), padx=Sizes.LG)
         btn_frame.grid_columnconfigure((0, 1), weight=1)
@@ -126,42 +126,42 @@ class AddCameraDialog(ctk.CTkToplevel):
             command=self.on_add
         ).grid(row=0, column=1, padx=(Sizes.SM, 0), sticky="ew")
         
-        # Bind Enter key
+        # Gán phím Enter
         self.source_entry.bind("<Return>", lambda e: self.on_add())
         self.source_entry.focus()
     
     def on_add(self):
-        # Handle add camera
+        # Xử lý thêm camera
         source_str = self.source_entry.get().strip()
         
         if not source_str:
             self.show_status("Please enter a camera source", Colors.ERROR)
             return
         
-        # Add camera using CameraManager's built-in method
+        # Thêm camera bằng phương thức có sẵn của CameraManager
         self.show_status("Adding camera...", Colors.PRIMARY)
         self.update()
         
-        # Use CameraManager's add_camera method
+        # Sử dụng phương thức add_camera
         success, message = self.camera_manager.add_camera(source_str)
         
         if success:
             log_activity(message, "success")
             self.show_status(f"✅ {message}", Colors.SUCCESS)
             
-            # Trigger refresh callback if provided
+            # Gọi callback làm mới nếu có
             if self.on_success:
                 self.on_success(source_str)
             
-            # Close after delay
+            # Đóng sau một khoảng trễ
             self.after(1000, self.destroy)
         else:
             self.show_status(f"❌ Error: {message}", Colors.ERROR)
     
     def on_cancel(self):
-        # Handle cancel
+        # Xử lý hủy
         self.destroy()
     
     def show_status(self, message: str, color: str):
-        # Show status message
+        # Hiển thị thông báo trạng thái
         self.status_label.configure(text=message, text_color=color)

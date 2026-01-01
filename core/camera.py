@@ -74,7 +74,7 @@ class Camera:
         # Trạng thái detection
         self.last_detection_enabled = False
         
-        # Override per-camera settings (None = dùng global settings)
+        # Ghi đè cài đặt riêng cho camera (None = dùng cài đặt chung)
         self.face_enabled = None
         
         # Kết nối camera
@@ -193,22 +193,22 @@ class Camera:
             # ----- Áp dụng bộ lọc màu -----
             frame = self.apply_color_filter(frame)
             
-            # Resize giữ aspect ratio để xử lý nhanh hơn
+            # Thay đổi kích thước giữ tỷ lệ khung hình để xử lý nhanh hơn
             proc_w, proc_h = settings.camera.process_size
             h, w = frame.shape[:2]
             
-            # Tính scale factor để fit vào process_size
+            # Tính tỷ lệ để vừa với kích thước xử lý
             scale = min(proc_w / w, proc_h / h)
             new_w = int(w * scale)
             new_h = int(h * scale)
             
             small = cv2.resize(frame, (new_w, new_h))
             
-            # Scale factor cho toạ độ
+            # Tỷ lệ cho toạ độ
             scale_x = w / new_w
             scale_y = h / new_h
             
-            # ----- Kiểm tra detection có bật không -----
+            # ----- Kiểm tra xem phát hiện có bật không -----
             detection_enabled = state_manager.is_detection_enabled(self.source_id)
             self.last_detection_enabled = detection_enabled
             
@@ -219,7 +219,7 @@ class Camera:
             if has_motion:
                 self.ai_active_until = now + 5.0
             
-            # Chỉ chạy AI khi cần (Face enabled hoặc chuyển động)
+            # Chỉ chạy AI khi cần (Bật nhận diện khuôn mặt hoặc có chuyển động)
             face_enabled = self.face_enabled if self.face_enabled is not None else settings.get('detection.face_recognition_enabled', True)
             
             should_run_ai = detection_enabled and face_enabled and (
@@ -229,7 +229,7 @@ class Camera:
             if should_run_ai:
                 self.process_persons(small, frame, scale_x, scale_y, face_enabled)
                 
-                # Giữ AI active nếu đang có người
+                # Duy trì AI hoạt động nếu đang có người
                 if self.person_tracker.has_tracks():
                     self.ai_active_until = now + 5.0
                     self.process_fall(frame, scale_x, scale_y)
@@ -265,7 +265,7 @@ class Camera:
         detections = self.person_tracker.detect(small, threshold)
         
         # Cập nhật tracking
-        # Skip face check nếu: IR mode HOẶC Face Recognition bị tắt
+        # Bỏ qua kiểm tra khuôn mặt nếu: Chế độ IR HOẶC Nhận diện khuôn mặt bị tắt
         skip_face = self.is_ir or not face_enabled
         
         self.person_tracker.update(detections, full, scale_x, scale_y, skip_face_check=skip_face)
@@ -289,7 +289,7 @@ class Camera:
             first_track = next(iter(tracks.values()))
             bbox = first_track.bbox  # (x1, y1, x2, y2)
         
-        # Cập nhật fall detector với frame và bbox
+        # Cập nhật bộ phát hiện té ngã với khung hình và hộp giới hạn
         self.fall_detector.update(frame, bbox=bbox)
         
         # Kiểm tra trạng thái té ngã
@@ -319,7 +319,7 @@ class Camera:
                 detections = result[1]
                 self.handle_fire_detections(detections, frame, scale_x, scale_y)
     
-    # Xử lý kết quả cháy (Red/Yellow alert)
+    # Xử lý kết quả cháy (Cảnh báo Đỏ/Vàng)
     def handle_fire_detections(self, detections, frame, scale_x, scale_y):
         
         validated_dets = []
@@ -327,7 +327,7 @@ class Camera:
         for det in detections:
             bbox = det['bbox']
             
-            # Validate với bộ lọc (loại bỏ false positive)
+            # Xác thực với bộ lọc (loại bỏ dương tính giả)
             if not self.fire_filter.validate(frame, bbox, self.is_ir):
                 continue
             
@@ -361,7 +361,7 @@ class Camera:
             
             self.fire_alert_callback(self.source_id, alert_frame, alert_type)
     
-    # Vẽ thông tin lên frame
+    # Vẽ thông tin lên khung hình
     def draw_overlays(self, frame, detection_enabled, scale_x=1.0, scale_y=1.0):
         
         # ----- Vẽ box cháy (đỏ) -----
@@ -372,7 +372,7 @@ class Camera:
             cv2.putText(frame, "🔥 FIRE", (box[0], box[1] - 5),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
             
-            # Hiển thị độ phát triển (Growth)
+            # Hiển thị tốc độ phát triển (Growth)
             growth = self.fire_tracker.current_growth_rate
             if growth > 1.05: # Chỉ hiện khi tăng > 5%
                 text = f"Growth: +{(growth-1)*100:.0f}%"
@@ -403,7 +403,7 @@ class Camera:
             cv2.putText(frame, "IR MODE", (10, frame.shape[0] - 20),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2)
         
-        # ----- Vẽ skeleton nếu có fall detector -----
+        # ----- Vẽ khung xương nếu có bộ phát hiện té ngã -----
         if self.fall_detector and self.fall_detector.last_kps is not None:
             self.fall_detector.draw_skeleton_overlay(frame)
         
@@ -564,14 +564,14 @@ class Camera:
     def get_infrared_status(self):
         return self.is_ir
     
-    # Bật/tắt chế độ IR thủ công (disable auto detect)
+    # Bật/tắt chế độ IR thủ công (tắt tự động phát hiện)
     def set_ir_enhancement(self, enabled):
         self.ir_manual_override = enabled  # Đánh dấu đang dùng manual
         self.is_ir = enabled
         mode = "IR (Ban đêm)" if enabled else "RGB (Ban ngày)"
         print(f"📷 Camera {self.source_id}: Chuyển sang chế độ {mode} (manual)")
     
-    # Reset về auto detect IR
+    # Đặt lại về tự động phát hiện IR
     def reset_ir_auto(self):
         self.ir_manual_override = None
         self.ir_history.clear()

@@ -26,10 +26,10 @@ class GuardianApp:
     
     def __init__(self):
         
-        self.state = state_manager              # State Mgr
-        self.spam_guard = spam_guard            # Anti-spam
-        self.recorder = Recorder()              # Video Recorder
-        self.response_queue = queue.Queue()     # Response Queue
+        self.state = state_manager              # Quản lý trạng thái
+        self.spam_guard = spam_guard            # Chống spam
+        self.recorder = Recorder()              # Trình ghi hình
+        self.response_queue = queue.Queue()     # Hàng đợi phản hồi
         self.shutdown_event = threading.Event()
         self.threads = []
         self.is_alarm_playing = False
@@ -39,12 +39,12 @@ class GuardianApp:
         # Theo dõi RAM
         memory_monitor.start()
         
-        # Init Alarm
+        # Khởi tạo Còi báo động
         if not init_alarm():
             print("⚠️ Còi báo động lỗi!")
             return False
         
-        # Init Face Detector
+        # Khởi tạo Nhận diện khuôn mặt
         self.face_detector = FaceDetector()
         
         if not self.face_detector.initialize():
@@ -54,7 +54,7 @@ class GuardianApp:
         self.face_detector.load_known_faces()
         print("✅ Face Detector đã sẵn sàng!")
         
-        # Init Fire Detector
+        # Khởi tạo Nhận diện lửa
         self.fire_detector = FireDetector()
         
         if not self.fire_detector.initialize():
@@ -63,7 +63,7 @@ class GuardianApp:
 
         print("✅ Fire Detector đã sẵn sàng!")
         
-        # Init Camera Manager
+        # Khởi tạo Quản lý Camera
         self.camera_manager = CameraManager(
             person_alert=self.person_alert,
             fire_alert=self.fire_alert,
@@ -77,7 +77,7 @@ class GuardianApp:
         )
         print("✅ Camera Manager đã sẵn sàng!")
         
-        # Init AI & Bot
+        # Khởi tạo AI & Bot
         self.ai_assistant = AIAssistant()
         
         self.bot = GuardianBot(
@@ -384,7 +384,7 @@ class GuardianApp:
             
             time.sleep(0.1)
     
-    # System heartbeat
+    # Check hệ thống còn sống
     def life_loop(self):
         interval = 300  # 5 phút
         last_beat = 0
@@ -408,7 +408,6 @@ class GuardianApp:
         stop_alarm()
         self.is_alarm_playing = False
     
-    # Main run loop
     def run(self):
         # Khởi tạo hệ thống
         if not self.initialize():
@@ -453,7 +452,7 @@ class GuardianApp:
         finally:
             self.shutdown()
     
-    # Shutdown system
+    # Tắt hệ thống
     def shutdown(self):
         # Tránh gọi nhiều lần
         if self.shutdown_event.is_set():

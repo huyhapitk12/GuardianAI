@@ -1,4 +1,4 @@
-# Main GUI Application
+# Ứng dụng GUI chính
 
 import threading
 from typing import Optional
@@ -32,7 +32,7 @@ class GuardianApp:
         log_system("GUI initialized", "success")
         log_activity("Guardian started", "success")
     
-    # Cấu hình Window
+    # Cấu hình cửa sổ
     def setup_window(self):
         set_appearance_mode("dark")
         
@@ -46,7 +46,7 @@ class GuardianApp:
     
     # Xây dựng giao diện
     def build_ui(self):
-        # Main container
+        # Container chính
         container = ctk.CTkFrame(self.root, fg_color=Colors.BG_PRIMARY)
         container.grid(row=0, column=0, sticky="nsew")
         
@@ -66,13 +66,13 @@ class GuardianApp:
         self.tabs.pack(fill="both", expand=True, padx=Sizes.MD, pady=Sizes.MD)
         self.tabs._segmented_button.configure(font=Fonts.BODY_BOLD, height=40)
         
-        # Add tabs
+        # Thêm tabs
         cameras_tab = self.tabs.add("📹 Cameras")
         persons_tab = self.tabs.add("👥 Persons")
         gallery_tab = self.tabs.add("🎞️ Gallery")
         settings_tab = self.tabs.add("⚙️ Settings")
         
-        # Create panels
+        # Tạo các panel
         self.panels['cameras'] = CamerasPanel(
             cameras_tab, self.camera_manager, self.state
         )
@@ -110,31 +110,31 @@ class GuardianApp:
         
         log_activity(f"Switched to {self.current_tab}", "info")
     
-    # Cleanup khi đóng
+    # Dọn dẹp khi đóng
     def shutdown(self):
         if 'cameras' in self.panels:
             self.panels['cameras'].stop()
 
 
-# Hàm chạy GUI loop
+# Hàm chạy vòng lặp GUI
 def run_gui(camera_manager, face_detector, state_manager, main_app=None):
     root = ctk.CTk()
     app = GuardianApp(root, camera_manager, face_detector, state_manager)
     
     def on_close():
-        # Handle window close event
+        # Xử lý sự kiện đóng cửa sổ
         try:
-            # Stop GUI components first
+            # Dừng các thành phần GUI trước
             app.shutdown()
             
-            # Call main app shutdown if available
+            # Gọi hàm tắt ứng dụng chính nếu có
             if main_app is not None:
                 log_system("Shutting down main app...", "info")
                 main_app.shutdown()
         except Exception as e:
             log_system(f"Shutdown error: {e}", "error")
         finally:
-            # Always destroy the GUI window
+            # Luôn hủy cửa sổ GUI
             root.destroy()
     
     root.protocol("WM_DELETE_WINDOW", on_close)
