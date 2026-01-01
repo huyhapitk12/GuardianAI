@@ -12,7 +12,7 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 
 from config import settings, ActionCode
-from utils import security, state_manager
+from utils import security, state_manager, spam_guard
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, CallbackQueryHandler, filters
@@ -177,13 +177,15 @@ def create_alert_keyboard(alert_id, is_fire=False):
         keyboard = [
             [InlineKeyboardButton("✅ Cháy thật", callback_data=f"fire_real:{alert_id}"),
              InlineKeyboardButton("❌ Giả", callback_data=f"fire_false:{alert_id}")],
-            [InlineKeyboardButton("📞 114", callback_data=f"fire_call:{alert_id}")]
+            [InlineKeyboardButton("📞 114", callback_data=f"fire_call:{alert_id}"),
+             InlineKeyboardButton("Tạm tắt 5p", callback_data=f"mute_5:{alert_id}")]
         ]
     else:
-        keyboard = [[
-            InlineKeyboardButton("✅ Quen", callback_data=f"person_yes:{alert_id}"),
-            InlineKeyboardButton("❌ Lạ", callback_data=f"person_no:{alert_id}")
-        ]]
+        keyboard = [
+            [InlineKeyboardButton("✅ Quen", callback_data=f"person_yes:{alert_id}"),
+             InlineKeyboardButton("❌ Lạ", callback_data=f"person_no:{alert_id}")],
+            [InlineKeyboardButton("Tạm tắt 15p", callback_data=f"mute_15:{alert_id}")]
+        ]
     
     return InlineKeyboardMarkup(keyboard)
 
@@ -313,6 +315,17 @@ class GuardianBot:
                 self.alarm.play()
             caption += "\n❌ NGƯỜI LẠ!"
             self.response_queue.put({"alert_id": alert_id, "decision": "no"})
+        elif "mute" in action:
+            # Xử lý tắt tiếng (snooze)
+            minutes = int(action.split("_")[1])
+            duration = minutes * 60
+            
+            # Lấy thông tin alert để biết mute cái gì
+            alert = state_manager.get_alert(alert_id)
+            if alert:
+                key = (alert.type, alert.source_id)
+                spam_guard.mute(key, duration)
+                caption += f"\nzzz Đã tạm tắt {minutes} phút"
         
         await query.edit_message_caption(caption=caption)
     

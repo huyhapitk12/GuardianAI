@@ -104,6 +104,10 @@ class GuardianApp:
         else:
             key = (alert_type, source_id) # Tạo key cho người lạ
         
+        # Bỏ qua nếu đã có cảnh báo (chưa giải quyết)
+        if alert_type == AlertType.STRANGER and self.state.has_unresolved(alert_type, source_id):
+            return
+        
         # Check có được gửi không
         if not self.spam_guard.allow(key):
             return
@@ -153,6 +157,10 @@ class GuardianApp:
         # Check có phải cảnh báo khẩn cấp        
         critical = (alert_type == AlertType.FIRE_CRITICAL)
         key = (alert_type, source_id)
+        
+        # Bỏ qua nếu đã có cảnh báo cháy chưa giải quyết
+        if self.state.has_unresolved(alert_type, source_id):
+            return
         
         # Anti-spam (Critical ưu tiên cao)
         if not self.spam_guard.allow(key, critical):
@@ -204,6 +212,10 @@ class GuardianApp:
     # Xử lý té ngã
     def fall_alert(self, source_id, frame, alert_type):
         key = (alert_type, source_id)
+        
+        # Bỏ qua nếu đã có cảnh báo té ngã chưa giải quyết
+        if self.state.has_unresolved(alert_type, source_id):
+            return
         
         # Check chống spam
         if not self.spam_guard.allow(key, critical=True):

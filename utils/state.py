@@ -97,10 +97,11 @@ class StateManager:
             alerts = sorted(self._alerts.values(), key=lambda a: a.timestamp, reverse=True)
             return alerts[:limit]
     
-    def has_unresolved(self, key):
+    def has_unresolved(self, alert_type, source_id=None):
         with self._lock:
+            key = (alert_type, source_id or 'default')
             return key in self._unresolved
-
+    
 
 # Ngăn chặn spam cảnh báo
 class SpamGuard:
